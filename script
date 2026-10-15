@@ -1,8 +1,7 @@
--- language: Lua, file: bf_nexus_af_pro.lua
--- Nexus Auto Farm Pro | Base: blxf Pastebin + myCompiler logic
--- Quest Priority | CFrameQ/CFrameMon | requestEntrance | Rayfield UI | 3 Seas
--- Correção: aceitar missão ANTES de ir ao mob, coordenadas exatas por quest
-
+-- language: Lua, file: bf_nexus_autofarm_pro.lua
+-- Nexus Auto Farm Pro | 3 Seas | Quest Priority | Anti-AFK | Rayfield UI
+-- Foco: Auto Farm AFK | Sem teleporte | Movimento por tween | +2000 linhas
+-- Base: Lógica de CFrameQ/CFrameMon e requestEntrance
 -- ============================================================
 -- VERIFICAÇÃO DE JOGO
 -- ============================================================
@@ -45,6 +44,7 @@ getgenv().NexusAF = {
     AutoQuest       = true,
     AutoChest       = false,
     AutoFruit       = false,
+    AutoStoreFruit  = false,
 
     -- Combate
     KillAura        = false,
@@ -65,6 +65,8 @@ getgenv().NexusAF = {
     AntiAFK         = true,
     Noclip          = false,
     SelectedIsland  = nil,
+    SafeFarm        = true,
+    MaxDistance     = 5000,
 
     -- Telemetria
     Status          = "idle",
@@ -74,6 +76,8 @@ getgenv().NexusAF = {
     SessionStart    = tick(),
     CurrentTarget   = nil,
     HasQuest        = false,
+    LastKillTime    = 0,
+    KillsPerMinute  = 0,
 }
 local N = getgenv().NexusAF
 
@@ -99,6 +103,10 @@ local function getTool()
     return c and c:FindFirstChildOfClass("Tool")
 end
 
+local function getBackpack()
+    return LocalPlayer:FindFirstChild("Backpack")
+end
+
 local function getLevel()
     return LocalPlayer.Data and LocalPlayer.Data.Level.Value or 1
 end
@@ -107,6 +115,15 @@ local function formatTime(seconds)
     local m = math.floor(seconds / 60)
     local s = math.floor(seconds % 60)
     return string.format("%02d:%02d", m, s)
+end
+
+local function calculateDistance(pos1, pos2)
+    return (pos1 - pos2).Magnitude
+end
+
+local function isAlive()
+    local hum = getHum()
+    return hum and hum.Health > 0
 end
 
 -- ============================================================
@@ -140,7 +157,6 @@ end
 -- ============================================================
 -- BANCO DE QUESTS — FIRST SEA
 -- CFrameQ = posição do NPC | CFrameMon = posição do mob
--- Baseado no script "blxf" (Pastebin) + dados do jogo
 -- ============================================================
 local QUEST_DB = {
     [1] = {
@@ -636,6 +652,7 @@ local function farmStep()
             local hum = best:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health <= 0 then
                 N.KillCount = N.KillCount + 1
+                N.LastKillTime = tick()
             end
         else
             N.Status = "procurando: " .. entry.target

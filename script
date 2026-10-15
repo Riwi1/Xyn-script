@@ -1,6 +1,6 @@
--- language: Lua, file: bf_afk_hub.lua
--- Blox Fruits AFK Farm Hub | Tween-safe movement | Anti-AFK real
--- Features: Auto Farm AFK, Auto Quest, Auto Chest, Auto Fruit, ESP, Anti-AFK
+-- language: Lua, file: bf_hub_completo.lua
+-- Blox Fruits Hub Completo | Tween-safe | Auto Quest | Weapon Select | Combat
+-- Features: Auto Farm, Auto Quest, Weapon Select, Combat, Fruit Sniper, ESP
 -- Suporte: Xeno, Delta, Solara, Codex, Arceus X | Mobile + PC
 
 -- ============================================================
@@ -9,7 +9,7 @@
 if game.PlaceId ~= 2753915549
    and game.PlaceId ~= 4442272183
    and game.PlaceId ~= 7449423635 then
-    return warn("[BF AFK] Execute dentro do Blox Fruits.")
+    return warn("[BF Hub] Execute dentro do Blox Fruits.")
 end
 
 -- ============================================================
@@ -17,36 +17,61 @@ end
 -- ============================================================
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
-local Players        = game:GetService("Players")
-local RunService     = game:GetService("RunService")
-local TweenService   = game:GetService("TweenService")
-local VirtualUser    = game:GetService("VirtualUser")
-local Workspace      = game:GetService("Workspace")
-local LocalPlayer    = Players.LocalPlayer
-local Camera         = Workspace.CurrentCamera
+-- ============================================================
+-- SERVIÇOS
+-- ============================================================
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local TweenService  = game:GetService("TweenService")
+local VirtualUser   = game:GetService("VirtualUser")
+local Workspace     = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer   = Players.LocalPlayer
+local Camera        = Workspace.CurrentCamera
 
 -- ============================================================
--- ESTADO
+-- ESTADO GLOBAL
 -- ============================================================
-getgenv().BF_AFK = {
-    autoFarm      = false,
-    autoQuest     = false,
-    autoChest     = false,
-    autoFruit     = false,
-    killAura      = false,
-    espFruit      = false,
-    espChest      = false,
-    antiAFK       = true,
-    tweenSpeed    = 0.18,
-    farmDistance  = 6,
-    selectedIsland = "Ilha 1",
+getgenv().BF_Hub = {
+    -- Farm
+    autoFarm        = false,
+    autoQuest       = false,
+    autoChest       = false,
+    autoFruit       = false,
+    farmDistance    = 8,
+    tweenSpeed      = 0.15,
+
+    -- Combate
+    killAura        = false,
+    fastAttack      = false,
+    autoSkill       = false,
+    selectedWeapon  = "Melee",
+    skillZ          = false,
+    skillX          = false,
+    skillC          = false,
+    skillV          = false,
+
+    -- Fruta / Arma
+    autoEquipFruit  = false,
+    fruitName       = "",
+    autoEquipSword  = false,
+    swordName       = "",
+
+    -- ESP
+    espFruit        = false,
+    espChest        = false,
+    espPlayer       = false,
+
+    -- Misc
+    antiAFK         = true,
+    noclip          = false,
+    selectedIsland  = "Ilha 1",
 }
-local S = getgenv().BF_AFK
+local S = getgenv().BF_Hub
 
 -- ============================================================
--- UTIL
+-- UTILITÁRIOS
 -- ============================================================
-
 local function getChar()
     return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 end
@@ -61,25 +86,21 @@ local function getHum()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
-local function getRoot()
+local function getTool()
     local c = getChar()
-    return c and c:FindFirstChild("HumanoidRootPart")
+    return c and c:FindFirstChildOfClass("Tool")
 end
 
 -- ============================================================
--- TWEEN MOVER — o coração do negócio
--- Move o player suavemente até um destino.
+-- TWEEN MOVER (movimento suave, não teleporte)
 -- ============================================================
 local function tweenTo(position, duration)
     local hrp = getHRP()
     if not hrp then return false end
 
     duration = duration or S.tweenSpeed
-
     local dist = (position - hrp.Position).Magnitude
-    -- Escala duração pela distância: longe = mais tempo
-    -- Evita "teleporte disfarçado" que o anticheat flagaria
-    local scaled = math.clamp(duration * (dist / 50), 0.1, 1.2)
+    local scaled = math.clamp(duration * (dist / 50), 0.08, 1.5)
 
     local info = TweenInfo.new(scaled, Enum.EasingStyle.Linear)
     local goal = {CFrame = CFrame.new(position)}
@@ -90,63 +111,182 @@ local function tweenTo(position, duration)
 end
 
 -- ============================================================
--- ANTI-AFK REAL
--- Desabilita a conexão Idled + simula input a cada 50s
+-- WEAPON SELECT (seleção real de arma)
 -- ============================================================
-if not getgenv().BF_AntiAFKLoaded then
-    getgenv().BF_AntiAFKLoaded = true
-    task.spawn(function()
-        while task.wait(5) do
-            if not S.antiAFK then continue end
-            pcall(function()
-                -- Desabilita TODAS as conexões de Idled
-                for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
-                    conn:Disable()
-                end
-                -- Simula input pro Roblox achar que você tá ativo
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new())
-            end)
+local function equipWeapon(weaponType)
+    local char = getChar()
+    if not char then return end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local tool = nil
+
+    if weaponType == "Melee" then
+        -- Procura estilo de luta na mochila
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:find("Combat") or item.Name:find("Fighting")
+               or item.Name == "Black Leg" or item.Name == "Electro"
+               or item.Name == "Fishman Karate" or item.Name == "Superhuman"
+               or item.Name == "Death Step" or item.Name == "Sharkman Karate"
+               or item.Name == "Dragon Talon" or item.Name == "Superhuman") then
+                tool = item
+                break
+            end
         end
-    end)
+        -- Fallback: primeira ferramenta sem ser arma
+        if not tool then
+            for _, item in pairs(backpack:GetChildren()) do
+                if item:IsA("Tool") and not item.Name:find("Sword")
+                   and not item.Name:find("Gun") then
+                    tool = item
+                    break
+                end
+            end
+        end
+
+    elseif weaponType == "Sword" then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:find("Sword") or item.Name:find("Saber")
+               or item.Name:find("Katana") or item.Name:find("Blade")
+               or item.Name:find("Cutlass") or item.Name:find("Trident")
+               or item.Name == "Dark Blade" or item.Name == "Dragon Trident"
+               or item.Name == "Soul Cane" or item.Name == "Midnight Blade") then
+                tool = item
+                break
+            end
+        end
+
+    elseif weaponType == "Gun" then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:find("Gun") or item.Name:find("Pistol")
+               or item.Name:find("Rifle") or item.Name:find("Cannon")
+               or item.Name:find("Bow") or item.Name:find("Slingshot")
+               or item.Name == "Bizarre Rifle" or item.Name == "Kabucha") then
+                tool = item
+                break
+            end
+        end
+
+    elseif weaponType == "Blox Fruit" then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") and (item.Name:find("Fruit") or item.Name:find("fruit")
+               or item.Name == "Dragon" or item.Name == "Leopard"
+               or item.Name == "Kitsune" or item.Name == "Dough"
+               or item.Name == "Venom" or item.Name == "Shadow") then
+                tool = item
+                break
+            end
+        end
+    end
+
+    if tool then
+        local hum = getHum()
+        if hum then
+            hum:EquipTool(tool)
+        end
+        return tool
+    end
+    return nil
 end
 
 -- ============================================================
--- QUEST
+-- COMBATE
 -- ============================================================
-local function getCurrentQuestNPC()
+local function attack()
+    local tool = getTool()
+    if tool then
+        pcall(function() tool:Activate() end)
+    end
+
+    -- Ataque melee via remoto padrão
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if remotes then
+        local comm = remotes:FindFirstChild("CommF_") or remotes:FindFirstChild("Comm")
+        if comm then
+            pcall(function() comm:FireServer() end)
+        end
+    end
+end
+
+local function useSkills()
+    if not S.autoSkill then return end
+    if not S.skillZ and not S.skillX and not S.skillC and not S.skillV then return end
+
+    local char = getChar()
+    if not char then return end
+
+    -- Habilidades são ativadas via teclas Z, X, C, V
+    -- O jogo usa ContextActionService, então simulamos o toque
+    local keybinds = {
+        [Enum.KeyCode.Z] = S.skillZ,
+        [Enum.KeyCode.X] = S.skillX,
+        [Enum.KeyCode.C] = S.skillC,
+        [Enum.KeyCode.V] = S.skillV,
+    }
+
+    for key, enabled in pairs(keybinds) do
+        if enabled then
+            pcall(function()
+                game:GetService("VirtualInputManager"):SendKeyEvent(true, key, false, game)
+                task.wait(0.05)
+                game:GetService("VirtualInputManager"):SendKeyEvent(false, key, false, game)
+            end)
+        end
+    end
+end
+
+-- ============================================================
+-- AUTO QUEST
+-- ============================================================
+local function getQuestNPC()
     local quests = Workspace:FindFirstChild("Quests")
     if not quests then return nil end
 
     local level = LocalPlayer.Data and LocalPlayer.Data.Level.Value or 0
+    local bestNPC = nil
+    local bestLevel = 0
+
     for _, npc in pairs(quests:GetChildren()) do
         if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
-            local lvl = npc:GetAttribute("Level") or 0
-            if level >= lvl and level < lvl + 15 then
-                return npc
+            local npcLevel = npc:GetAttribute("Level") or 0
+            -- Pega o NPC de quest mais próximo do nível atual
+            if level >= npcLevel and npcLevel > bestLevel then
+                bestNPC = npc
+                bestLevel = npcLevel
             end
         end
     end
-    return nil
+    return bestNPC
 end
 
 local function autoQuest()
     if not S.autoQuest then return end
 
-    local npc = getCurrentQuestNPC()
+    local npc = getQuestNPC()
     if not npc then return end
 
     local hrp = getHRP()
     if not hrp then return end
 
-    local pos = npc.HumanoidRootPart.Position
-    if (pos - hrp.Position).Magnitude > 10 then
-        tweenTo(pos + Vector3.new(0, 5, 0), 0.3)
+    local npcPos = npc.HumanoidRootPart.Position
+    local dist = (npcPos - hrp.Position).Magnitude
+
+    if dist > 15 then
+        tweenTo(npcPos + Vector3.new(0, 5, 0), 0.3)
+        task.wait(0.4)
+    end
+
+    -- Interage com o NPC de quest (via remoto ou proximidade)
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if remotes then
+        local comm = remotes:FindFirstChild("CommF_") or remotes:FindFirstChild("Comm")
+        if comm then
+            pcall(function() comm:FireServer("StartQuest") end)
+        end
     end
 end
 
 -- ============================================================
--- FARM
+-- AUTO FARM (com seleção de arma)
 -- ============================================================
 local function getNearestEnemy()
     local hrp = getHRP()
@@ -169,53 +309,39 @@ local function getNearestEnemy()
             end
         end
     end
-    return best
+    return best, bestDist
 end
 
-local function attackMob(mob)
-    local hrp = getHRP()
-    if not hrp or not mob then return end
-
-    local pos = mob.HumanoidRootPart.Position
-    -- Fica a uma distância segura e ataca
-    tweenTo(pos + Vector3.new(0, 5, 0), 0.12)
-
-    -- Equipa ferramenta e ativa
-    local tool = getChar():FindFirstChildOfClass("Tool")
-    if tool then
-        tool:Activate()
-    end
-
-    -- Ataque melee (o remoto padrão do jogo)
-    local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-    if remotes then
-        local comm = remotes:FindFirstChild("CommF_") or remotes:FindFirstChild("Comm")
-        if comm then
-            pcall(function() comm:FireServer() end)
-        end
-    end
-end
-
-local function autoFarmLevel()
+local function autoFarm()
     if not S.autoFarm then return end
 
-    local questNPC = getCurrentQuestNPC()
-    if questNPC then
-        local hrp = getHRP()
-        if hrp and (questNPC.HumanoidRootPart.Position - hrp.Position).Magnitude > 15 then
-            tweenTo(questNPC.HumanoidRootPart.Position + Vector3.new(0, 5, 0), 0.4)
-            task.wait(0.6)
-        end
+    -- Equipa a arma selecionada
+    equipWeapon(S.selectedWeapon)
+
+    local mob, dist = getNearestEnemy()
+    if not mob then return end
+
+    local hrp = getHRP()
+    if not hrp then return end
+
+    local mobPos = mob.HumanoidRootPart.Position
+    local targetPos = mobPos + Vector3.new(0, 5, 0)
+
+    if dist > S.farmDistance then
+        tweenTo(targetPos, 0.12)
     end
 
-    local mob = getNearestEnemy()
-    if mob then
-        attackMob(mob)
+    -- Ataca
+    attack()
+
+    -- Usa habilidades se ativado
+    if S.autoSkill then
+        useSkills()
     end
 end
 
 -- ============================================================
--- CHEST
+-- AUTO CHEST / FRUIT
 -- ============================================================
 local function autoChest()
     if not S.autoChest then return end
@@ -225,17 +351,14 @@ local function autoChest()
     for _, obj in pairs(Workspace:GetDescendants()) do
         if obj.Name == "Chest" and obj:IsA("MeshPart") then
             local d = (obj.Position - hrp.Position).Magnitude
-            if d < 800 then
+            if d < 600 then
                 tweenTo(obj.Position + Vector3.new(0, 3, 0), 0.15)
-                task.wait(0.15)
+                task.wait(0.2)
             end
         end
     end
 end
 
--- ============================================================
--- FRUIT
--- ============================================================
 local function autoFruit()
     if not S.autoFruit then return end
     local hrp = getHRP()
@@ -245,7 +368,7 @@ local function autoFruit()
         if obj:IsA("Tool") and obj:FindFirstChild("Handle")
            and (obj.Name:find("Fruit") or obj.Name == "Fruit") then
             local d = (obj.Handle.Position - hrp.Position).Magnitude
-            if d < 1000 then
+            if d < 800 then
                 tweenTo(obj.Handle.Position, 0.2)
                 task.wait(0.3)
             end
@@ -254,7 +377,7 @@ local function autoFruit()
 end
 
 -- ============================================================
--- KILL AURA (conservador — só inimigo próximo)
+-- KILL AURA (conservador)
 -- ============================================================
 local function killAura()
     if not S.killAura then return end
@@ -266,13 +389,7 @@ local function killAura()
 
     local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
     if d < 35 then
-        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-        if remotes then
-            local comm = remotes:FindFirstChild("CommF_") or remotes:FindFirstChild("Comm")
-            if comm then
-                pcall(function() comm:FireServer() end)
-            end
-        end
+        attack()
     end
 end
 
@@ -280,7 +397,7 @@ end
 -- ESP
 -- ============================================================
 local espFolder = Instance.new("Folder")
-espFolder.Name = "BF_AFK_ESP"
+espFolder.Name = "BF_Hub_ESP"
 espFolder.Parent = Workspace
 
 local function makeESP(part, text, color)
@@ -322,10 +439,56 @@ local function updateESP()
             end
         end
     end
+
+    if S.espPlayer then
+        for _, plr in pairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    makeESP(hrp, plr.Name, Color3.fromRGB(255, 50, 50))
+                end
+            end
+        end
+    end
 end
 
 -- ============================================================
--- TELEPORTE (tween, nunca instantâneo)
+-- ANTI-AFK
+-- ============================================================
+if not getgenv().BF_AntiAFK then
+    getgenv().BF_AntiAFK = true
+    task.spawn(function()
+        while task.wait(3) do
+            if not S.antiAFK then continue end
+            pcall(function()
+                for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
+                    conn:Disable()
+                end
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+        end
+    end)
+end
+
+-- ============================================================
+-- LOOP PRINCIPAL
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.1) do
+        pcall(function()
+            if S.autoFarm   then autoFarm()    end
+            if S.autoQuest  then autoQuest()   end
+            if S.autoChest  then autoChest()   end
+            if S.autoFruit  then autoFruit()   end
+            if S.killAura   then killAura()    end
+            if S.espFruit or S.espChest or S.espPlayer then updateESP() end
+        end)
+    end
+end)
+
+-- ============================================================
+-- TELEPORTE (tween)
 -- ============================================================
 local ISLANDS = {
     ["Ilha 1"]   = Vector3.new(1073, 18, 1401),
@@ -356,41 +519,25 @@ local ISLANDS = {
 }
 
 -- ============================================================
--- LOOP
--- ============================================================
-task.spawn(function()
-    while task.wait(0.1) do
-        pcall(function()
-            if S.autoFarm  then autoFarmLevel() end
-            if S.autoQuest then autoQuest()     end
-            if S.autoChest then autoChest()     end
-            if S.autoFruit then autoFruit()     end
-            if S.killAura  then killAura()      end
-            if S.espFruit or S.espChest then updateESP() end
-        end)
-    end
-end)
-
--- ============================================================
 -- UI
 -- ============================================================
 local Window = Rayfield:CreateWindow({
-    Name = "BF AFK Farm",
+    Name = "BF Hub Completo",
     LoadingTitle = "Carregando...",
     LoadingSubtitle = "by Zyon",
     ConfigurationSaving = {
         Enabled = true,
-        FolderName = "BF_AFK",
+        FolderName = "BF_Hub",
         FileName = "Config"
     },
     KeySystem = false
 })
 
--- ----- FARM -----
+-- ----- ABA: FARM -----
 local FarmTab = Window:CreateTab("Farm", 4483362458)
 
 FarmTab:CreateToggle({
-    Name = "Auto Farm AFK (Nível + Quest)",
+    Name = "Auto Farm (Nível + Quest)",
     CurrentValue = false,
     Flag = "AutoFarm",
     Callback = function(v) S.autoFarm = v end
@@ -417,11 +564,12 @@ FarmTab:CreateToggle({
     Callback = function(v) S.autoFruit = v end
 })
 
-FarmTab:CreateToggle({
-    Name = "Kill Aura (conservador)",
-    CurrentValue = false,
-    Flag = "KillAura",
-    Callback = function(v) S.killAura = v end
+FarmTab:CreateDropdown({
+    Name = "Arma para Farm",
+    Options = {"Melee", "Sword", "Gun", "Blox Fruit"},
+    CurrentOption = {"Melee"},
+    Flag = "WeaponSelect",
+    Callback = function(option) S.selectedWeapon = option[1] end
 })
 
 FarmTab:CreateSlider({
@@ -429,12 +577,57 @@ FarmTab:CreateSlider({
     Range = {0.05, 0.5},
     Increment = 0.01,
     Suffix = "s",
-    CurrentValue = 0.18,
+    CurrentValue = 0.15,
     Flag = "TweenSpeed",
     Callback = function(v) S.tweenSpeed = v end
 })
 
--- ----- ESP -----
+-- ----- ABA: COMBATE -----
+local CombatTab = Window:CreateTab("Combate", 4483362458)
+
+CombatTab:CreateToggle({
+    Name = "Kill Aura (conservador)",
+    CurrentValue = false,
+    Flag = "KillAura",
+    Callback = function(v) S.killAura = v end
+})
+
+CombatTab:CreateToggle({
+    Name = "Auto Skill (usa Z/X/C/V)",
+    CurrentValue = false,
+    Flag = "AutoSkill",
+    Callback = function(v) S.autoSkill = v end
+})
+
+CombatTab:CreateToggle({
+    Name = "Habilidade Z",
+    CurrentValue = false,
+    Flag = "SkillZ",
+    Callback = function(v) S.skillZ = v end
+})
+
+CombatTab:CreateToggle({
+    Name = "Habilidade X",
+    CurrentValue = false,
+    Flag = "SkillX",
+    Callback = function(v) S.skillX = v end
+})
+
+CombatTab:CreateToggle({
+    Name = "Habilidade C",
+    CurrentValue = false,
+    Flag = "SkillC",
+    Callback = function(v) S.skillC = v end
+})
+
+CombatTab:CreateToggle({
+    Name = "Habilidade V",
+    CurrentValue = false,
+    Flag = "SkillV",
+    Callback = function(v) S.skillV = v end
+})
+
+-- ----- ABA: ESP -----
 local EspTab = Window:CreateTab("ESP", 4483362458)
 
 EspTab:CreateToggle({
@@ -451,7 +644,14 @@ EspTab:CreateToggle({
     Callback = function(v) S.espChest = v end
 })
 
--- ----- TELEPORTE -----
+EspTab:CreateToggle({
+    Name = "ESP Jogadores",
+    CurrentValue = false,
+    Flag = "EspPlayer",
+    Callback = function(v) S.espPlayer = v end
+})
+
+-- ----- ABA: TELEPORTE -----
 local TpTab = Window:CreateTab("Teleporte", 4483362458)
 
 local islandNames = {}
@@ -483,11 +683,11 @@ TpTab:CreateButton({
     end
 })
 
--- ----- MISC -----
+-- ----- ABA: MISC -----
 local MiscTab = Window:CreateTab("Misc", 4483362458)
 
 MiscTab:CreateToggle({
-    Name = "Anti-AFK (recomendado)",
+    Name = "Anti-AFK",
     CurrentValue = true,
     Flag = "AntiAFK",
     Callback = function(v) S.antiAFK = v end
@@ -501,13 +701,23 @@ MiscTab:CreateButton({
     end
 })
 
+MiscTab:CreateButton({
+    Name = "Coletar Baús (one-time)",
+    Callback = function()
+        local oldChest = S.autoChest
+        S.autoChest = true
+        task.wait(5)
+        S.autoChest = oldChest
+    end
+})
+
 -- ============================================================
 -- START
 -- ============================================================
 Rayfield:Notify({
-    Title = "BF AFK Farm",
-    Content = "Carregado. Deixa o Auto Farm ligado e vai AFK.",
+    Title = "BF Hub Completo",
+    Content = "Carregado. Configure a arma e o método de farm.",
     Duration = 4
 })
 
-print("[BF AFK] Carregado.")
+print("[BF Hub] Carregado com sucesso.")

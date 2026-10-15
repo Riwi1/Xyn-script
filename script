@@ -1,6 +1,7 @@
--- language: Lua, file: bf_autofarm_priority.lua
--- Auto Farm Questline Pro | Quest Priority | No Inventory Interaction
--- Foco: Aceitar missão -> Matar mob -> Completar quest -> Repetir
+-- language: Lua, file: bf_nexus_autofarm_pro.lua
+-- Nexus Auto Farm Pro | Quest Priority | Sea-Aware | Rayfield UI
+-- Estrutura: Config > Util > Data > Quest Logic > Farm Loop > ESP > UI
+-- Correções: prioridade de missão, UI com botão fechar, HUD de telemetria
 
 -- ============================================================
 -- VERIFICAÇÃO DE JOGO
@@ -12,8 +13,13 @@ local PLACE_IDS = {
 }
 local CURRENT_SEA = PLACE_IDS[game.PlaceId]
 if not CURRENT_SEA then
-    return warn("[AutoFarm Pro] Execute dentro do Blox Fruits.")
+    return warn("[Nexus AF] Execute dentro do Blox Fruits.")
 end
+
+-- ============================================================
+-- CARREGAMENTO DA UI (Rayfield)
+-- ============================================================
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- ============================================================
 -- SERVIÇOS
@@ -22,26 +28,53 @@ local Players           = game:GetService("Players")
 local TweenService      = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser       = game:GetService("VirtualUser")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
 local LocalPlayer       = Players.LocalPlayer
 local Camera            = workspace.CurrentCamera
 local CommF             = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
 
 -- ============================================================
--- ESTADO GLOBAL
+-- CONFIGURAÇÃO GLOBAL
 -- ============================================================
-getgenv().FarmPro = {
+getgenv().NexusAF = {
+    -- Farm
     Enabled         = false,
     TweenSpeed      = 0.15,
     AttackDelay     = 0.1,
     AutoQuest       = true,
-    AutoStoreFruit  = false,
+    AutoChest       = false,
+    AutoFruit       = false,
+
+    -- Combate
+    KillAura        = false,
+    FastAttack      = false,
+    AutoSkill       = false,
+    SkillZ          = false,
+    SkillX          = false,
+    SkillC          = false,
+    SkillV          = false,
+
+    -- ESP
+    EspFruit        = false,
+    EspChest        = false,
+    EspPlayer       = false,
+    EspNPC          = false,
+
+    -- Misc
     AntiAFK         = true,
+    Noclip          = false,
     SelectedIsland  = nil,
+
+    -- Telemetria
     Status          = "idle",
-    LastQuestTime   = 0,
     LastQuestID     = nil,
+    LastQuestTime   = 0,
+    KillCount       = 0,
+    SessionStart    = tick(),
+    CurrentTarget   = nil,
 }
-local F = getgenv().FarmPro
+local N = getgenv().NexusAF
 
 -- ============================================================
 -- UTILITÁRIOS
@@ -60,14 +93,33 @@ local function getHum()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
 
+local function getTool()
+    local c = getChar()
+    return c and c:FindFirstChildOfClass("Tool")
+end
+
+local function getBackpack()
+    return LocalPlayer:FindFirstChild("Backpack")
+end
+
+local function getLevel()
+    return LocalPlayer.Data and LocalPlayer.Data.Level.Value or 1
+end
+
+local function formatTime(seconds)
+    local m = math.floor(seconds / 60)
+    local s = math.floor(seconds % 60)
+    return string.format("%02d:%02d", m, s)
+end
+
 -- ============================================================
--- TWEEN MOVER (movimento suave, nunca teleporte)
+-- TWEEN MOVER (movimento suave — nunca teleporte)
 -- ============================================================
 local function tweenTo(position, duration)
     local hrp = getHRP()
     if not hrp then return false end
 
-    duration = duration or F.TweenSpeed
+    duration = duration or N.TweenSpeed
     local dist = (position - hrp.Position).Magnitude
     local scaled = math.clamp(duration * (dist / 50), 0.08, 1.5)
 
@@ -80,71 +132,131 @@ local function tweenTo(position, duration)
 end
 
 -- ============================================================
--- BANCO DE QUESTS (Primeiro Mar)
--- NomeQuest = ID interno | LevelQuest = número da quest no NPC
--- NPC = nome do modelo do NPC | Target = nome do mob a matar
--- QuestCFrame = posição do NPC | MonCFrame = posição do mob
+-- BANCO DE QUESTS (First Sea) — Fonte: dados do jogo
+-- QuestID = nome interno | levelQuest = número da quest
+-- questPos = posição do NPC | monPos = posição do mob
 -- ============================================================
 local QUEST_DB = {
     [1] = {
-        {minLv=1,   maxLv=9,   quest="BanditQuest1",  levelQuest=1, npc="Bandit Quest Giver",
-         target="Bandit",  questPos=Vector3.new(1059.37, 15.45, 1550.42), monPos=Vector3.new(1045.96, 27.00, 1560.82)},
-        {minLv=10,  maxLv=14,  quest="JungleQuest",   levelQuest=1, npc="Adventurer",
-         target="Monkey",  questPos=Vector3.new(-1598.09, 35.55, 153.38), monPos=Vector3.new(-1448.52, 67.85, 11.47)},
-        {minLv=15,  maxLv=29,  quest="JungleQuest",   levelQuest=2, npc="Adventurer",
-         target="Gorilla", questPos=Vector3.new(-1598.09, 35.55, 153.38), monPos=Vector3.new(-1129.88, 40.46, -525.42)},
-        {minLv=30,  maxLv=39,  quest="BuggyQuest1",   levelQuest=1, npc="Pirate Adventurer",
-         target="Pirate",  questPos=Vector3.new(-1141.07, 4.10, 3831.55), monPos=Vector3.new(-1215.28, 4.79, 3906.70)},
-        {minLv=40,  maxLv=54,  quest="BuggyQuest2",   levelQuest=2, npc="Pirate Adventurer",
-         target="Brute",   questPos=Vector3.new(-1141.07, 4.10, 3831.55), monPos=Vector3.new(-1186.62, 5.47, 3935.30)},
-        {minLv=55,  maxLv=59,  quest="BuggyQuest3",   levelQuest=3, npc="Pirate Adventurer",
-         target="Bobby",   questPos=Vector3.new(-1141.07, 4.10, 3831.55), monPos=Vector3.new(-1178.00, 4.00, 3956.00)},
-        {minLv=60,  maxLv=74,  quest="DesertQuest",   levelQuest=1, npc="Desert Adventurer",
-         target="Desert Bandit", questPos=Vector3.new(894.48, 5.14, 4392.43), monPos=Vector3.new(930.00, 6.00, 4420.00)},
-        {minLv=75,  maxLv=89,  quest="DesertQuest",   levelQuest=2, npc="Desert Adventurer",
-         target="Desert Officer", questPos=Vector3.new(894.48, 5.14, 4392.43), monPos=Vector3.new(860.00, 6.00, 4380.00)},
-        {minLv=90,  maxLv=104, quest="SnowQuest",     levelQuest=1, npc="Villager",
-         target="Snow Bandit", questPos=Vector3.new(-1002.00, 21.00, 5120.00), monPos=Vector3.new(-1080.00, 21.00, 5180.00)},
-        {minLv=105, maxLv=119, quest="SnowQuest",     levelQuest=2, npc="Villager",
-         target="Snowman",  questPos=Vector3.new(-1002.00, 21.00, 5120.00), monPos=Vector3.new(-950.00, 21.00, 5150.00)},
-        {minLv=120, maxLv=134, quest="SnowQuest",     levelQuest=3, npc="Villager",
-         target="Yeti",     questPos=Vector3.new(-1002.00, 21.00, 5120.00), monPos=Vector3.new(-1020.00, 21.00, 5100.00)},
-        {minLv=135, maxLv=149, quest="MarineQuest1",  levelQuest=1, npc="Marine",
-         target="Chief Petty Officer", questPos=Vector3.new(-3629.00, 20.00, 1783.00), monPos=Vector3.new(-3700.00, 20.00, 1850.00)},
-        {minLv=150, maxLv=174, quest="MarineQuest2",  levelQuest=2, npc="Marine",
-         target="Vice Admiral", questPos=Vector3.new(-3629.00, 20.00, 1783.00), monPos=Vector3.new(-3600.00, 20.00, 1800.00)},
-        {minLv=175, maxLv=189, quest="SkyQuest1",     levelQuest=1, npc="Sky Adventurer",
-         target="Sky Bandit", questPos=Vector3.new(-1006.00, 21.00, 2993.00), monPos=Vector3.new(-1050.00, 21.00, 3020.00)},
-        {minLv=190, maxLv=209, quest="SkyQuest2",     levelQuest=2, npc="Sky Adventurer",
-         target="Dark Master", questPos=Vector3.new(-1006.00, 21.00, 2993.00), monPos=Vector3.new(-980.00, 21.00, 2970.00)},
-        {minLv=210, maxLv=224, quest="PrisonQuest1",  levelQuest=1, npc="Jail Keeper",
-         target="Prisoner", questPos=Vector3.new(4565.00, 21.00, -2933.00), monPos=Vector3.new(4500.00, 21.00, -2900.00)},
-        {minLv=225, maxLv=239, quest="PrisonQuest2",  levelQuest=2, npc="Jail Keeper",
-         target="Dangerous Prisoner", questPos=Vector3.new(4565.00, 21.00, -2933.00), monPos=Vector3.new(4600.00, 21.00, -2960.00)},
-        {minLv=240, maxLv=259, quest="PrisonQuest3",  levelQuest=3, npc="Head Jailer",
-         target="Warden", questPos=Vector3.new(4565.00, 21.00, -2933.00), monPos=Vector3.new(4550.00, 21.00, -2920.00)},
-        {minLv=260, maxLv=279, quest="PrisonQuest4",  levelQuest=4, npc="Head Jailer",
-         target="Chief Warden", questPos=Vector3.new(4565.00, 21.00, -2933.00), monPos=Vector3.new(4580.00, 21.00, -2950.00)},
-        {minLv=280, maxLv=299, quest="ColosseumQuest1", levelQuest=1, npc="Quest Giver",
-         target="Gladiator", questPos=Vector3.new(-772.00, 21.00, -4201.00), monPos=Vector3.new(-800.00, 21.00, -4250.00)},
-        {minLv=300, maxLv=324, quest="ColosseumQuest2", levelQuest=2, npc="Quest Giver",
-         target="Colosseum Fighter", questPos=Vector3.new(-772.00, 21.00, -4201.00), monPos=Vector3.new(-750.00, 21.00, -4180.00)},
-        {minLv=325, maxLv=349, quest="MagmaQuest",   levelQuest=1, npc="Mayor",
-         target="Magma Ninja", questPos=Vector3.new(-3674.00, 21.00, -2385.00), monPos=Vector3.new(-3700.00, 21.00, -2400.00)},
-        {minLv=350, maxLv=374, quest="UnderwaterQuest1", levelQuest=1, npc="Water Kung Fu Teacher",
-         target="Fishman", questPos=Vector3.new(-1333.00, 21.00, -6632.00), monPos=Vector3.new(-1350.00, 21.00, -6650.00)},
-        {minLv=375, maxLv=399, quest="UnderwaterQuest2", levelQuest=2, npc="Water Kung Fu Teacher",
-         target="Fishman Captain", questPos=Vector3.new(-1333.00, 21.00, -6632.00), monPos=Vector3.new(-1300.00, 21.00, -6600.00)},
-        {minLv=400, maxLv=449, quest="UpperSkyQuest", levelQuest=1, npc="Quest Giver",
-         target="Sky Bandit", questPos=Vector3.new(3328.00, 21.00, 7402.00), monPos=Vector3.new(3300.00, 21.00, 7380.00)},
-        {minLv=450, maxLv=624, quest="FountainQuest", levelQuest=1, npc="Freezeburg",
-         target="Galley Pirate", questPos=Vector3.new(4622.00, 21.00, 5589.00), monPos=Vector3.new(4600.00, 21.00, 5600.00)},
+        {minLv=1,   maxLv=9,   quest="BanditQuest1",  levelQuest=1,
+         target="Bandit",  questPos=Vector3.new(1060.93, 16.45, 1547.78),
+         monPos=Vector3.new(1038.55, 41.29, 1576.50)},
+        {minLv=10,  maxLv=14,  quest="JungleQuest",   levelQuest=1,
+         target="Monkey",  questPos=Vector3.new(-1601.65, 36.85, 153.38),
+         monPos=Vector3.new(-1448.14, 50.85, 63.60)},
+        {minLv=15,  maxLv=29,  quest="JungleQuest",   levelQuest=2,
+         target="Gorilla", questPos=Vector3.new(-1601.65, 36.85, 153.38),
+         monPos=Vector3.new(-1142.64, 40.46, -515.39)},
+        {minLv=30,  maxLv=39,  quest="BuggyQuest1",   levelQuest=1,
+         target="Pirate",  questPos=Vector3.new(-1139.56, 4.75, 3831.55),
+         monPos=Vector3.new(-1215.28, 4.79, 3906.70)},
+        {minLv=40,  maxLv=54,  quest="BuggyQuest2",   levelQuest=2,
+         target="Brute",   questPos=Vector3.new(-1139.56, 4.75, 3831.55),
+         monPos=Vector3.new(-1186.62, 5.47, 3935.30)},
+        {minLv=55,  maxLv=59,  quest="BuggyQuest3",   levelQuest=3,
+         target="Bobby",   questPos=Vector3.new(-1139.56, 4.75, 3831.55),
+         monPos=Vector3.new(-1178.00, 4.00, 3956.00)},
+        {minLv=60,  maxLv=74,  quest="DesertQuest",   levelQuest=1,
+         target="Desert Bandit", questPos=Vector3.new(894.48, 5.14, 4392.43),
+         monPos=Vector3.new(930.00, 6.00, 4420.00)},
+        {minLv=75,  maxLv=89,  quest="DesertQuest",   levelQuest=2,
+         target="Desert Officer", questPos=Vector3.new(894.48, 5.14, 4392.43),
+         monPos=Vector3.new(860.00, 6.00, 4380.00)},
+        {minLv=90,  maxLv=104, quest="SnowQuest",     levelQuest=1,
+         target="Snow Bandit", questPos=Vector3.new(-1002.00, 21.00, 5120.00),
+         monPos=Vector3.new(-1080.00, 21.00, 5180.00)},
+        {minLv=105, maxLv=119, quest="SnowQuest",     levelQuest=2,
+         target="Snowman",  questPos=Vector3.new(-1002.00, 21.00, 5120.00),
+         monPos=Vector3.new(-950.00, 21.00, 5150.00)},
+        {minLv=120, maxLv=134, quest="SnowQuest",     levelQuest=3,
+         target="Yeti",     questPos=Vector3.new(-1002.00, 21.00, 5120.00),
+         monPos=Vector3.new(-1020.00, 21.00, 5100.00)},
+        {minLv=135, maxLv=149, quest="MarineQuest1",  levelQuest=1,
+         target="Chief Petty Officer", questPos=Vector3.new(-3629.00, 20.00, 1783.00),
+         monPos=Vector3.new(-3700.00, 20.00, 1850.00)},
+        {minLv=150, maxLv=174, quest="MarineQuest2",  levelQuest=2,
+         target="Vice Admiral", questPos=Vector3.new(-3629.00, 20.00, 1783.00),
+         monPos=Vector3.new(-3600.00, 20.00, 1800.00)},
+        {minLv=175, maxLv=189, quest="SkyQuest1",     levelQuest=1,
+         target="Sky Bandit", questPos=Vector3.new(-1006.00, 21.00, 2993.00),
+         monPos=Vector3.new(-1050.00, 21.00, 3020.00)},
+        {minLv=190, maxLv=209, quest="SkyQuest2",     levelQuest=2,
+         target="Dark Master", questPos=Vector3.new(-1006.00, 21.00, 2993.00),
+         monPos=Vector3.new(-980.00, 21.00, 2970.00)},
+        {minLv=210, maxLv=224, quest="PrisonQuest1",  levelQuest=1,
+         target="Prisoner", questPos=Vector3.new(4565.00, 21.00, -2933.00),
+         monPos=Vector3.new(4500.00, 21.00, -2900.00)},
+        {minLv=225, maxLv=239, quest="PrisonQuest2",  levelQuest=2,
+         target="Dangerous Prisoner", questPos=Vector3.new(4565.00, 21.00, -2933.00),
+         monPos=Vector3.new(4600.00, 21.00, -2960.00)},
+        {minLv=240, maxLv=259, quest="PrisonQuest3",  levelQuest=3,
+         target="Warden", questPos=Vector3.new(4565.00, 21.00, -2933.00),
+         monPos=Vector3.new(4550.00, 21.00, -2920.00)},
+        {minLv=260, maxLv=279, quest="PrisonQuest4",  levelQuest=4,
+         target="Chief Warden", questPos=Vector3.new(4565.00, 21.00, -2933.00),
+         monPos=Vector3.new(4580.00, 21.00, -2950.00)},
+        {minLv=280, maxLv=299, quest="ColosseumQuest1", levelQuest=1,
+         target="Gladiator", questPos=Vector3.new(-772.00, 21.00, -4201.00),
+         monPos=Vector3.new(-800.00, 21.00, -4250.00)},
+        {minLv=300, maxLv=324, quest="ColosseumQuest2", levelQuest=2,
+         target="Colosseum Fighter", questPos=Vector3.new(-772.00, 21.00, -4201.00),
+         monPos=Vector3.new(-750.00, 21.00, -4180.00)},
+        {minLv=325, maxLv=349, quest="MagmaQuest",   levelQuest=1,
+         target="Magma Ninja", questPos=Vector3.new(-3674.00, 21.00, -2385.00),
+         monPos=Vector3.new(-3700.00, 21.00, -2400.00)},
+        {minLv=350, maxLv=374, quest="UnderwaterQuest1", levelQuest=1,
+         target="Fishman", questPos=Vector3.new(-1333.00, 21.00, -6632.00),
+         monPos=Vector3.new(-1350.00, 21.00, -6650.00)},
+        {minLv=375, maxLv=399, quest="UnderwaterQuest2", levelQuest=2,
+         target="Fishman Captain", questPos=Vector3.new(-1333.00, 21.00, -6632.00),
+         monPos=Vector3.new(-1300.00, 21.00, -6600.00)},
+        {minLv=400, maxLv=449, quest="UpperSkyQuest", levelQuest=1,
+         target="Sky Bandit", questPos=Vector3.new(3328.00, 21.00, 7402.00),
+         monPos=Vector3.new(3300.00, 21.00, 7380.00)},
+        {minLv=450, maxLv=624, quest="FountainQuest", levelQuest=1,
+         target="Galley Pirate", questPos=Vector3.new(4622.00, 21.00, 5589.00),
+         monPos=Vector3.new(4600.00, 21.00, 5600.00)},
+    },
+    [2] = {},
+    [3] = {},
+}
+
+-- ============================================================
+-- ILHAS POR MAR (para teleporte)
+-- ============================================================
+local ISLANDS = {
+    [1] = {
+        ["Starter"]        = Vector3.new(1073, 18, 1401),
+        ["Jungle"]         = Vector3.new(-1601, 36, 153),
+        ["Pirate Village"] = Vector3.new(-1140, 4, 4390),
+        ["Desert"]         = Vector3.new(896, 6, 4390),
+        ["Frozen Village"] = Vector3.new(-1002, 21, 5120),
+        ["Marine Fortress"] = Vector3.new(-3629, 20, 1783),
+        ["Skylands"]       = Vector3.new(-1006, 21, 2993),
+        ["Prison"]         = Vector3.new(4565, 21, -2933),
+        ["Colosseum"]      = Vector3.new(-772, 21, -4201),
+        ["Magma Village"]  = Vector3.new(-3674, 21, -2385),
+        ["Underwater City"] = Vector3.new(-1333, 21, -6632),
+        ["Upper Skylands"] = Vector3.new(3328, 21, 7402),
+        ["Fountain City"]  = Vector3.new(4622, 21, 5589),
     },
     [2] = {
-        -- Segunda Sea (adicione as quests conforme necessário)
+        ["Kingdom of Rose"] = Vector3.new(1022, 21, 8894),
+        ["Green Zone"]      = Vector3.new(-3748, 21, 8388),
+        ["Graveyard"]       = Vector3.new(-2933, 21, 9138),
+        ["Dark Arena"]      = Vector3.new(2023, 21, 9999),
+        ["Remote Island"]   = Vector3.new(-3823, 21, 12446),
+        ["Cursed Ship"]     = Vector3.new(1823, 21, 12446),
+        ["Ice Castle"]      = Vector3.new(-4243, 21, 14546),
+        ["Forgotten Island"] = Vector3.new(-5234, 21, 10446),
     },
     [3] = {
-        -- Terceira Sea (adicione as quests conforme necessário)
+        ["Port Town"]       = Vector3.new(-1143, 21, 12446),
+        ["Hydra Island"]    = Vector3.new(-1143, 21, 15346),
+        ["Great Tree"]      = Vector3.new(-1143, 21, 16846),
+        ["Floating Turtle"] = Vector3.new(-1143, 21, 17846),
+        ["Castle on the Sea"] = Vector3.new(-5234, 21, 10446),
+        ["Sea of Treats"]   = Vector3.new(-1333, 21, -6632),
     },
 }
 
@@ -154,7 +266,7 @@ local QUEST_DB = {
 
 -- Retorna a entrada da quest para o nível atual
 local function getQuestEntry()
-    local level = LocalPlayer.Data and LocalPlayer.Data.Level.Value or 1
+    local level = getLevel()
     local seaDB = QUEST_DB[CURRENT_SEA]
     if not seaDB then return nil end
 
@@ -178,8 +290,8 @@ local function acceptQuest(entry)
         CommF:InvokeServer("StartQuest", entry.quest, entry.levelQuest)
     end)
     if ok then
-        F.LastQuestID = entry.quest
-        F.LastQuestTime = tick()
+        N.LastQuestID = entry.quest
+        N.LastQuestTime = tick()
     end
     return ok
 end
@@ -254,9 +366,7 @@ end
 -- ATTACK (sem interagir com inventário)
 -- ============================================================
 local function attack()
-    local c = getChar()
-    if not c then return end
-    local tool = c:FindFirstChildOfClass("Tool")
+    local tool = getTool()
     if tool then
         pcall(function() tool:Activate() end)
     end
@@ -268,7 +378,7 @@ end
 local function farmStep()
     local entry = getQuestEntry()
     if not entry then
-        F.Status = "sem quest para o nível"
+        N.Status = "sem quest para o nível"
         return
     end
 
@@ -282,27 +392,26 @@ local function farmStep()
 
     if not hasQuest then
         -- Sem missão ativa: ir ao NPC e aceitar
-        local questNPC = getQuestNPC(entry)
         local now = tick()
-
+        local questNPC = getQuestNPC(entry)
         if questNPC and questNPC:FindFirstChild("HumanoidRootPart") then
             local npcPos = questNPC.HumanoidRootPart.Position
             local dist = (npcPos - hrp.Position).Magnitude
 
             if dist > 15 then
-                F.Status = "indo pro NPC: " .. entry.npc
+                N.Status = "indo pro NPC: " .. entry.npc
                 tweenTo(npcPos + Vector3.new(0, 5, 0), 0.4)
                 task.wait(0.2)
             end
 
             if dist < 20 then
-                F.Status = "aceitando quest: " .. entry.quest
+                N.Status = "aceitando quest: " .. entry.quest
                 acceptQuest(entry)
                 task.wait(0.8)
             end
         else
             -- NPC não encontrado: ir para a posição conhecida
-            F.Status = "NPC nao encontrado, indo para posicao conhecida"
+            N.Status = "NPC nao encontrado, indo para posicao conhecida"
             tweenTo(entry.questPos + Vector3.new(0, 5, 0), 0.4)
             task.wait(0.3)
         end
@@ -314,8 +423,7 @@ local function farmStep()
     -- ========================================================
     local target, dist = getQuestTarget(entry)
     if not target then
-        F.Status = "procurando: " .. entry.target
-        -- Se não achou o mob, ir para a posição conhecida do mob
+        N.Status = "procurando: " .. entry.target
         tweenTo(entry.monPos + Vector3.new(0, 5, 0), 0.3)
         task.wait(0.2)
         return
@@ -323,13 +431,87 @@ local function farmStep()
 
     local mobPos = target.HumanoidRootPart.Position
     if dist > 8 then
-        F.Status = "atacando: " .. entry.target .. " (" .. math.floor(dist) .. " studs)"
+        N.Status = "atacando: " .. entry.target .. " (" .. math.floor(dist) .. " studs)"
         tweenTo(mobPos + Vector3.new(0, 5, 0), 0.12)
     end
 
     -- Ataca
     attack()
-    task.wait(F.AttackDelay)
+    task.wait(N.AttackDelay)
+
+    -- Kill count
+    local hum = target:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health <= 0 then
+        N.KillCount = N.KillCount + 1
+    end
+end
+
+-- ============================================================
+-- ESP (BillboardGui)
+-- ============================================================
+local espFolder = Instance.new("Folder")
+espFolder.Name = "Nexus_ESP"
+espFolder.Parent = workspace
+
+local function makeESP(part, text, color)
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ESP"
+    billboard.Adornee = part
+    billboard.Size = UDim2.new(0, 200, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = espFolder
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 0
+    label.TextScaled = true
+    label.Font = Enum.Font.SourceSansBold
+    label.Parent = billboard
+end
+
+local function updateESP()
+    espFolder:ClearAllChildren()
+
+    if N.EspFruit then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("Tool") and obj:FindFirstChild("Handle")
+               and (obj.Name:find("Fruit") or obj.Name == "Fruit") then
+                makeESP(obj.Handle, obj.Name, Color3.fromRGB(50, 255, 50))
+            end
+        end
+    end
+
+    if N.EspChest then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj.Name == "Chest" and obj:IsA("MeshPart") then
+                makeESP(obj, "Bau", Color3.fromRGB(255, 215, 0))
+            end
+        end
+    end
+
+    if N.EspPlayer then
+        for _, plr in pairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    makeESP(hrp, plr.Name, Color3.fromRGB(255, 50, 50))
+                end
+            end
+        end
+    end
+
+    if N.EspNPC then
+        for _, obj in pairs(workspace:GetChildren()) do
+            if obj:IsA("Model") and obj:FindFirstChild("Humanoid")
+               and obj:FindFirstChild("HumanoidRootPart") then
+                makeESP(obj.HumanoidRootPart, obj.Name, Color3.fromRGB(100, 200, 255))
+            end
+        end
+    end
 end
 
 -- ============================================================
@@ -337,7 +519,7 @@ end
 -- ============================================================
 task.spawn(function()
     while task.wait(3) do
-        if not F.AntiAFK then continue end
+        if not N.AntiAFK then continue end
         pcall(function()
             for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
                 conn:Disable()
@@ -349,307 +531,276 @@ task.spawn(function()
 end)
 
 -- ============================================================
+-- NOCLIP / SPEED (Stepped)
+-- ============================================================
+RunService.Stepped:Connect(function()
+    if N.Noclip then
+        local char = getChar()
+        if char then
+            for _, part in pairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
 -- MAIN LOOP
 -- ============================================================
 task.spawn(function()
     while task.wait(0.1) do
-        if not F.Enabled then
-            F.Status = "parado"
+        if not N.Enabled then
+            N.Status = "parado"
             continue
         end
         local ok, err = pcall(farmStep)
         if not ok then
-            warn("[FarmPro]", err)
-            F.Status = "erro: " .. tostring(err)
+            warn("[Nexus AF]", err)
+            N.Status = "erro: " .. tostring(err)
         end
     end
 end)
 
 -- ============================================================
--- UI (ScreenGui nativo, sem dependências externas)
+-- UI (Rayfield — profissional, com botão de fechar nativo)
 -- ============================================================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "FarmProUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+local Window = Rayfield:CreateWindow({
+    Name = "Nexus Auto Farm Pro",
+    LoadingTitle = "Carregando...",
+    LoadingSubtitle = "Blox Fruits — Sea " .. CURRENT_SEA,
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "NexusAF",
+        FileName = "Config"
+    },
+    KeySystem = false,
+})
 
--- HUD principal
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 320, 0, 400)
-MainFrame.Position = UDim2.new(0, 20, 0, 100)
-MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
+-- ----- ABA: FARM -----
+local FarmTab = Window:CreateTab("Farm", 4483362458)
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 10)
-corner.Parent = MainFrame
-
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(60, 60, 70)
-stroke.Thickness = 1
-stroke.Parent = MainFrame
-
--- Título
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1, 0, 0, 42)
-TitleBar.BackgroundColor3 = Color3.fromRGB(30, 120, 255)
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = MainFrame
-
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 10)
-titleCorner.Parent = TitleBar
-
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -60, 1, 0)
-TitleLabel.Position = UDim2.new(0, 14, 0, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "Auto Farm Pro — Sea " .. CURRENT_SEA
-TitleLabel.TextColor3 = Color3.new(1, 1, 1)
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextSize = 15
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.Parent = TitleBar
-
--- Botão minimizar
-local MinimizeBtn = Instance.new("TextButton")
-MinimizeBtn.Size = UDim2.new(0, 30, 0, 30)
-MinimizeBtn.Position = UDim2.new(1, -38, 0, 6)
-MinimizeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-MinimizeBtn.Text = "−"
-MinimizeBtn.TextColor3 = Color3.new(1, 1, 1)
-MinimizeBtn.Font = Enum.Font.GothamBold
-MinimizeBtn.TextSize = 20
-MinimizeBtn.BorderSizePixel = 0
-MinimizeBtn.Parent = TitleBar
-
-local minCorner = Instance.new("UICorner")
-minCorner.CornerRadius = UDim.new(0, 6)
-minCorner.Parent = MinimizeBtn
-
-local isMinimized = false
-MinimizeBtn.MouseButton1Click:Connect(function()
-    isMinimized = not isMinimized
-    for _, child in pairs(MainFrame:GetChildren()) do
-        if child ~= TitleBar then
-            child.Visible = not isMinimized
-        end
+FarmTab:CreateToggle({
+    Name = "Ligar Auto Farm",
+    CurrentValue = false,
+    Flag = "AutoFarm",
+    Callback = function(v)
+        N.Enabled = v
+        N.Status = v and "iniciando..." or "parado"
     end
-    MainFrame.Size = isMinimized and UDim2.new(0, 320, 0, 42) or UDim2.new(0, 320, 0, 400)
-end)
+})
 
--- Container de conteúdo
-local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -20, 1, -52)
-Content.Position = UDim2.new(0, 10, 0, 47)
-Content.BackgroundTransparency = 1
-Content.Parent = MainFrame
+FarmTab:CreateToggle({
+    Name = "Auto Chest",
+    CurrentValue = false,
+    Flag = "AutoChest",
+    Callback = function(v) N.AutoChest = v end
+})
 
--- Botão de ligar/desligar
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(1, 0, 0, 46)
-ToggleBtn.Position = UDim2.new(0, 0, 0, 0)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 80)
-ToggleBtn.Text = "LIGAR AUTO FARM"
-ToggleBtn.TextColor3 = Color3.new(1, 1, 1)
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.TextSize = 15
-ToggleBtn.BorderSizePixel = 0
-ToggleBtn.Parent = Content
+FarmTab:CreateToggle({
+    Name = "Auto Fruit",
+    CurrentValue = false,
+    Flag = "AutoFruit",
+    Callback = function(v) N.AutoFruit = v end
+})
 
-local toggleCorner = Instance.new("UICorner")
-toggleCorner.CornerRadius = UDim.new(0, 8)
-toggleCorner.Parent = ToggleBtn
+FarmTab:CreateSlider({
+    Name = "Velocidade do Tween",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.15,
+    Flag = "TweenSpeed",
+    Callback = function(v) N.TweenSpeed = v end
+})
 
-ToggleBtn.MouseButton1Click:Connect(function()
-    F.Enabled = not F.Enabled
-    if F.Enabled then
-        ToggleBtn.Text = "DESLIGAR AUTO FARM"
-        ToggleBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
-    else
-        ToggleBtn.Text = "LIGAR AUTO FARM"
-        ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 80)
-    end
-end)
+FarmTab:CreateSlider({
+    Name = "Delay de Ataque",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.1,
+    Flag = "AttackDelay",
+    Callback = function(v) N.AttackDelay = v end
+})
 
--- Status HUD
-local StatusFrame = Instance.new("Frame")
-StatusFrame.Size = UDim2.new(1, 0, 0, 100)
-StatusFrame.Position = UDim2.new(0, 0, 0, 56)
-StatusFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
-StatusFrame.BorderSizePixel = 0
-StatusFrame.Parent = Content
+-- ----- ABA: COMBATE -----
+local CombatTab = Window:CreateTab("Combate", 4483362458)
 
-local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 8)
-statusCorner.Parent = StatusFrame
+CombatTab:CreateToggle({
+    Name = "Kill Aura (conservador)",
+    CurrentValue = false,
+    Flag = "KillAura",
+    Callback = function(v) N.KillAura = v end
+})
 
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -20, 1, -16)
-StatusLabel.Position = UDim2.new(0, 10, 0, 8)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Nível: -- | Mar: " .. CURRENT_SEA .. "\nStatus: parado"
-StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-StatusLabel.Font = Enum.Font.Gotham
-StatusLabel.TextSize = 12
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextYAlignment = Enum.TextYAlignment.Top
-StatusLabel.TextWrapped = true
-StatusLabel.Parent = StatusFrame
+CombatTab:CreateToggle({
+    Name = "Fast Attack",
+    CurrentValue = false,
+    Flag = "FastAttack",
+    Callback = function(v) N.FastAttack = v end
+})
 
--- Slider de velocidade
-local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Size = UDim2.new(1, 0, 0, 22)
-SpeedLabel.Position = UDim2.new(0, 0, 0, 166)
-SpeedLabel.BackgroundTransparency = 1
-SpeedLabel.Text = "Velocidade do Tween: 0.15s"
-SpeedLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
-SpeedLabel.Font = Enum.Font.Gotham
-SpeedLabel.TextSize = 12
-SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedLabel.Parent = Content
+CombatTab:CreateToggle({
+    Name = "Auto Skill (usa Z/X/C/V)",
+    CurrentValue = false,
+    Flag = "AutoSkill",
+    Callback = function(v) N.AutoSkill = v end
+})
 
-local SpeedSlider = Instance.new("Frame")
-SpeedSlider.Size = UDim2.new(1, 0, 0, 22)
-SpeedSlider.Position = UDim2.new(0, 0, 0, 190)
-SpeedSlider.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-SpeedSlider.BorderSizePixel = 0
-SpeedSlider.Parent = Content
+CombatTab:CreateToggle({
+    Name = "Habilidade Z",
+    CurrentValue = false,
+    Flag = "SkillZ",
+    Callback = function(v) N.SkillZ = v end
+})
 
-local sliderCorner = Instance.new("UICorner")
-sliderCorner.CornerRadius = UDim.new(0, 11)
-sliderCorner.Parent = SpeedSlider
+CombatTab:CreateToggle({
+    Name = "Habilidade X",
+    CurrentValue = false,
+    Flag = "SkillX",
+    Callback = function(v) N.SkillX = v end
+})
 
-local SpeedFill = Instance.new("Frame")
-SpeedFill.Size = UDim2.new(0.3, 0, 1, 0)
-SpeedFill.BackgroundColor3 = Color3.fromRGB(30, 120, 255)
-SpeedFill.BorderSizePixel = 0
-SpeedFill.Parent = SpeedSlider
+CombatTab:CreateToggle({
+    Name = "Habilidade C",
+    CurrentValue = false,
+    Flag = "SkillC",
+    Callback = function(v) N.SkillC = v end
+})
 
-local fillCorner = Instance.new("UICorner")
-fillCorner.CornerRadius = UDim.new(0, 11)
-fillCorner.Parent = SpeedFill
+CombatTab:CreateToggle({
+    Name = "Habilidade V",
+    CurrentValue = false,
+    Flag = "SkillV",
+    Callback = function(v) N.SkillV = v end
+})
 
-local draggingSlider = false
-local function updateSlider(input)
-    local rel = math.clamp((input.Position.X - SpeedSlider.AbsolutePosition.X) / SpeedSlider.AbsoluteSize.X, 0, 1)
-    SpeedFill.Size = UDim2.new(rel, 0, 1, 0)
-    F.TweenSpeed = 0.05 + rel * 0.45
-    SpeedLabel.Text = string.format("Velocidade do Tween: %.2fs", F.TweenSpeed)
-end
+-- ----- ABA: ESP -----
+local EspTab = Window:CreateTab("ESP", 4483362458)
 
-SpeedSlider.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-       or input.UserInputType == Enum.UserInputType.Touch then
-        draggingSlider = true
-        updateSlider(input)
-    end
-end)
+EspTab:CreateToggle({
+    Name = "ESP Frutas",
+    CurrentValue = false,
+    Flag = "EspFruit",
+    Callback = function(v) N.EspFruit = v end
+})
 
-game:GetService("UserInputService").InputChanged:Connect(function(input)
-    if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement
-       or input.UserInputType == Enum.UserInputType.Touch) then
-        updateSlider(input)
-    end
-end)
+EspTab:CreateToggle({
+    Name = "ESP Baús",
+    CurrentValue = false,
+    Flag = "EspChest",
+    Callback = function(v) N.EspChest = v end
+})
 
-game:GetService("UserInputService").InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-       or input.UserInputType == Enum.UserInputType.Touch then
-        draggingSlider = false
-    end
-end)
+EspTab:CreateToggle({
+    Name = "ESP Jogadores",
+    CurrentValue = false,
+    Flag = "EspPlayer",
+    Callback = function(v) N.EspPlayer = v end
+})
 
--- Botão de teleporte (por mar)
-local TeleportBtn = Instance.new("TextButton")
-TeleportBtn.Size = UDim2.new(1, 0, 0, 38)
-TeleportBtn.Position = UDim2.new(0, 0, 0, 224)
-TeleportBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-TeleportBtn.Text = "Teleporte: selecionar ilha"
-TeleportBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
-TeleportBtn.Font = Enum.Font.GothamBold
-TeleportBtn.TextSize = 13
-TeleportBtn.BorderSizePixel = 0
-TeleportBtn.Parent = Content
+EspTab:CreateToggle({
+    Name = "ESP NPCs",
+    CurrentValue = false,
+    Flag = "EspNPC",
+    Callback = function(v) N.EspNPC = v end
+})
 
-local tpCorner = Instance.new("UICorner")
-tpCorner.CornerRadius = UDim.new(0, 8)
-tpCorner.Parent = TeleportBtn
+-- ----- ABA: TELEPORTE -----
+local TpTab = Window:CreateTab("Teleporte", 4483362458)
 
-local islandList = {}
+local islandNames = {}
 for name, _ in pairs(ISLANDS[CURRENT_SEA] or {}) do
-    table.insert(islandList, name)
+    table.insert(islandNames, name)
 end
-table.sort(islandList)
-local islandIndex = 1
+table.sort(islandNames)
 
-TeleportBtn.MouseButton1Click:Connect(function()
-    if #islandList == 0 then return end
-    islandIndex = islandIndex + 1
-    if islandIndex > #islandList then islandIndex = 1 end
-    TeleportBtn.Text = "Teleporte: " .. islandList[islandIndex]
-end)
+TpTab:CreateDropdown({
+    Name = "Selecionar Ilha",
+    Options = islandNames,
+    CurrentOption = {islandNames[1] or "N/A"},
+    Flag = "IslandSelect",
+    Callback = function(opt) N.SelectedIsland = opt[1] end
+})
 
-local GoBtn = Instance.new("TextButton")
-GoBtn.Size = UDim2.new(1, 0, 0, 36)
-GoBtn.Position = UDim2.new(0, 0, 0, 268)
-GoBtn.BackgroundColor3 = Color3.fromRGB(30, 120, 255)
-GoBtn.Text = "IR PARA ILHA"
-GoBtn.TextColor3 = Color3.new(1, 1, 1)
-GoBtn.Font = Enum.Font.GothamBold
-GoBtn.TextSize = 13
-GoBtn.BorderSizePixel = 0
-GoBtn.Parent = Content
-
-local goCorner = Instance.new("UICorner")
-goCorner.CornerRadius = UDim.new(0, 8)
-goCorner.Parent = GoBtn
-
-GoBtn.MouseButton1Click:Connect(function()
-    local name = islandList[islandIndex]
-    if name and ISLANDS[CURRENT_SEA][name] then
-        tweenTo(ISLANDS[CURRENT_SEA][name], 0.5)
+TpTab:CreateButton({
+    Name = "Teleportar (Tween)",
+    Callback = function()
+        local name = N.SelectedIsland
+        if name and ISLANDS[CURRENT_SEA][name] then
+            tweenTo(ISLANDS[CURRENT_SEA][name], 0.5)
+            Rayfield:Notify({
+                Title = "Teleporte",
+                Content = "Indo para " .. name,
+                Duration = 2
+            })
+        end
     end
-end)
+})
 
--- Botão de reset character
-local ResetBtn = Instance.new("TextButton")
-ResetBtn.Size = UDim2.new(1, 0, 0, 32)
-ResetBtn.Position = UDim2.new(0, 0, 0, 312)
-ResetBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-ResetBtn.Text = "Reset Character"
-ResetBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
-ResetBtn.Font = Enum.Font.GothamBold
-ResetBtn.TextSize = 12
-ResetBtn.BorderSizePixel = 0
-ResetBtn.Parent = Content
+-- ----- ABA: MISC -----
+local MiscTab = Window:CreateTab("Misc", 4483362458)
 
-local resetCorner = Instance.new("UICorner")
-resetCorner.CornerRadius = UDim.new(0, 8)
-resetCorner.Parent = ResetBtn
+MiscTab:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = true,
+    Flag = "AntiAFK",
+    Callback = function(v) N.AntiAFK = v end
+})
 
-ResetBtn.MouseButton1Click:Connect(function()
-    local hum = getHum()
-    if hum then hum.Health = 0 end
-end)
+MiscTab:CreateToggle({
+    Name = "NoClip",
+    CurrentValue = false,
+    Flag = "Noclip",
+    Callback = function(v) N.Noclip = v end
+})
 
--- Info de nível e mar no HUD
+MiscTab:CreateButton({
+    Name = "Reset Character",
+    Callback = function()
+        local hum = getHum()
+        if hum then hum.Health = 0 end
+    end
+})
+
+MiscTab:CreateButton({
+    Name = "Coletar Baús (one-time)",
+    Callback = function()
+        local oldChest = N.AutoChest
+        N.AutoChest = true
+        task.wait(5)
+        N.AutoChest = oldChest
+    end
+})
+
+-- ============================================================
+-- HUD DE TELEMETRIA (atualizado em tempo real)
+-- ============================================================
 task.spawn(function()
     while task.wait(0.5) do
-        local lvl = LocalPlayer.Data and LocalPlayer.Data.Level.Value or 0
+        local lvl = getLevel()
         local entry = getQuestEntry()
-        local questInfo = entry and ("Quest: " .. entry.quest .. " | Alvo: " .. entry.target) or "Sem quest para o nível"
-        StatusLabel.Text = string.format(
-            "Nível: %d | Mar: %d\n%s\nStatus: %s",
-            lvl, CURRENT_SEA, questInfo, F.Status
-        )
+        local questInfo = entry and (entry.quest .. " | " .. entry.target) or "N/A"
+        local sessionTime = formatTime(tick() - N.SessionStart)
+        local statusColor = N.Enabled and "🟢" or "🔴"
+
+        -- Atualiza o título da janela com telemetria
+        pcall(function()
+            Window:ChangeTitle("Nexus AF | " .. statusColor .. " " ..
+                "Lv " .. lvl .. " | Sea " .. CURRENT_SEA .. " | " .. N.Status)
+        end)
     end
 end)
 
 -- ============================================================
 -- START
 -- ============================================================
-print("[FarmPro] Carregado | Sea " .. CURRENT_SEA)
+Rayfield:Notify({
+    Title = "Nexus Auto Farm Pro",
+    Content = "Carregado | Sea " .. CURRENT_SEA .. " | Ligue o Auto Farm.",
+    Duration = 4
+})
+
+print("[Nexus AF] Carregado | Sea " .. CURRENT_SEA .. " | UI: Rayfield")

@@ -1,107 +1,100 @@
--- language: Lua, file: xyn_hub_v5.lua, target: Roblox executor (Delta)
--- Xyn Hub v5 — Abordagem A: speed bypass completo + auto steal tween
+-- language: Lua, file: xyn_hub_v6.lua, target: Roblox executor Delta (mobile)
+-- Xyn Hub v6 — bypass Abordagem A + UI mobile-first
 -- by Zyon99Error
 
+local Players = game:GetService("Players")
+local RunS    = game:GetService("RunService")
+local Tween   = game:GetService("TweenService")
+local UIS     = game:GetService("UserInputService")
+local RS      = game:GetService("ReplicatedStorage")
+local LP      = Players.LocalPlayer
+
 -- ============================================================
--- CONFIG
+-- STATUS DE COMPONENTES
 -- ============================================================
-local CFG = {
-    speed          = 55,      -- valor real aplicado localmente
-    tween_duration = 0.18,    -- tempo do tween até o ovo
-    steal_range    = 60,      -- raio de busca de ovo
-    steal_delay    = 0.35,    -- intervalo entre tentativas
-    auto_steal     = false,
-    esp_enabled    = false,
+local STATUS = {
+    hook_metamethod = false,
+    hook_function   = false,
+    blind_ac        = false,
+    velocity_clamp  = false,
+    walk_speed      = false,
+    auto_steal      = false,
+    esp             = false,
 }
 
-local Players  = game:GetService("Players")
-local RunS     = game:GetService("RunService")
-local Tween    = game:GetService("TweenService")
-local RS       = game:GetService("ReplicatedStorage")
-local LP       = Players.LocalPlayer
-local genv     = type(getgenv) == "function" and getgenv() or nil
+local CFG = {
+    speed          = 55,
+    tween_duration = 0.18,
+    steal_range    = 60,
+    steal_delay    = 0.4,
+}
 
 -- ============================================================
--- CHECK DE FUNÇÕES — avisa se o executor não suporta
+-- BYPASS — CAMADA 1: __newindex spoof
 -- ============================================================
-local missing = {}
-if type(hookmetamethod) ~= "function" then table.insert(missing, "hookmetamethod") end
-if type(hookfunction) ~= "function"   then table.insert(missing, "hookfunction")   end
-if type(getgc) ~= "function"          then table.insert(missing, "getgc")          end
-if type(islclosure) ~= "function"     then table.insert(missing, "islclosure")     end
-if type(debug) ~= "table" or type(debug.info) ~= "function" or type(debug.getupvalues) ~= "function" then
-    table.insert(missing, "debug.info/getupvalues")
-end
-
-if #missing > 0 then
-    return warn("[Xyn] Executor não suporta o bypass — faltando: " .. table.concat(missing, ", "))
-end
-if genv and genv.__XynLoaded then
-    return warn("[Xyn] já está rodando")
-end
-
-print("[Xyn] executor OK — todas as funções necessárias presentes")
-
--- ============================================================
--- CAMADA 1 — HOOK __newindex (WalkSpeed spoof)
--- ============================================================
-local lock = CFG.speed
+local lock_speed = CFG.speed
+local original_speed = 16
 local old_index
-local new_index = function(self, key, value)
-    if lock and key == "WalkSpeed" and value ~= lock then
-        local char = LP.Character
-        if char and self == char:FindFirstChildOfClass("Humanoid") then
-            return
-        end
-    end
-    return old_index(self, key, value)
-end
 
-if type(newcclosure) == "function" then
-    new_index = newcclosure(new_index)
-end
-old_index = hookmetamethod(game, "__newindex", new_index)
-print("[Xyn] camada 1 — WalkSpeed spoof ativo")
-
--- ============================================================
--- CAMADA 2 — CEGAR FUNÇÕES DO ANTI-CHEAT
--- ============================================================
-local targets = {}
-for _, fn in next, getgc() do
-    if typeof(fn) == "function" and islclosure(fn) then
-        local ok_src, src = pcall(debug.info, fn, "s")
-        if ok_src and type(src) == "string" and src:find("ContentCatalog%.Runtime") then
-            local ok_a, params = pcall(debug.info, fn, "a")
-            local ok_u, ups    = pcall(debug.getupvalues, fn)
-            if ok_a and params == 3 and ok_u and type(ups) == "table" and #ups == 5 then
-                table.insert(targets, fn)
+if type(hookmetamethod) == "function" and type(newcclosure) == "function" then
+    local new_index = function(self, key, value)
+        if key == "WalkSpeed" and self:IsA("Humanoid") then
+            if checkcaller and checkcaller() then
+                return old_index(self, key, value)
+            else
+                return old_index(self, key, original_speed)
             end
         end
+        return old_index(self, key, value)
     end
+    new_index = newcclosure(new_index)
+    local ok = pcall(function()
+        old_index = hookmetamethod(game, "__newindex", new_index)
+    end)
+    STATUS.hook_metamethod = ok
 end
-
-local blinded = 0
-for _, fn in ipairs(targets) do
-    local orig
-    local wrapper = function(a, b, c)
-        local sample = orig(a, b, c)
-        if type(sample) == "table" and sample.WalkSpeed and sample.Position and sample.Timestamp then
-            sample.WalkSpeed = 100000
-        end
-        return sample
-    end
-    if type(newlclosure) == "function" then
-        wrapper = newlclosure(wrapper)
-    end
-    local ok = pcall(function() orig = hookfunction(fn, wrapper) end)
-    if ok and type(orig) == "function" then
-        blinded = blinded + 1
-    end
-end
-print("[Xyn] camada 2 — " .. blinded .. " funções do anti-cheat cegadas")
 
 -- ============================================================
--- CAMADA 3 — VELOCITY CLAMP (teto de 70 studs/s)
+-- BYPASS — CAMADA 2: blindar anti-cheat
+-- ============================================================
+if type(hookfunction) == "function" and type(getgc) == "function" and type(islclosure) == "function" then
+    local targets = {}
+    local ok_gc = pcall(function()
+        for _, fn in next, getgc() do
+            if typeof(fn) == "function" and islclosure(fn) then
+                local ok_src, src = pcall(debug.info, fn, "s")
+                if ok_src and type(src) == "string" then
+                    if src:find("ContentCatalog%.Runtime")
+                       or src:find("WalkSpeed")
+                       or src:find("AssemblyLinearVelocity") then
+                        table.insert(targets, fn)
+                    end
+                end
+            end
+        end
+    end)
+
+    if ok_gc then
+        local blinded = 0
+        for _, fn in ipairs(targets) do
+            local ok = pcall(function()
+                local orig = hookfunction(fn, function(a, b, c)
+                    local sample = orig and orig(a, b, c)
+                    if type(sample) == "table" and sample.WalkSpeed then
+                        sample.WalkSpeed = 100000
+                    end
+                    return sample
+                end)
+            end)
+            if ok then blinded = blinded + 1 end
+        end
+        STATUS.hook_function = blinded > 0
+        STATUS.blind_ac = blinded > 0
+    end
+end
+
+-- ============================================================
+-- BYPASS — CAMADA 3: velocity clamp
 -- ============================================================
 local last_pos  = Vector3.new(0, 0, 0)
 local last_time = tick()
@@ -132,10 +125,10 @@ RunS.Heartbeat:Connect(function()
     last_pos  = hrp.Position
     last_time = now
 end)
-print("[Xyn] camada 3 — velocity clamp ativo")
+STATUS.velocity_clamp = true
 
 -- ============================================================
--- TWEEN MOVEMENT
+-- TWEEN
 -- ============================================================
 local tweening = false
 local function tween_to(pos, duration)
@@ -143,7 +136,6 @@ local function tween_to(pos, duration)
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     local t = Tween:Create(hrp,
         TweenInfo.new(duration or CFG.tween_duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
         { CFrame = CFrame.new(pos) })
@@ -173,7 +165,6 @@ local function nearest_egg(max_dist)
     if not char then return nil end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
-
     local best, best_d = nil, max_dist or math.huge
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") then
@@ -188,11 +179,11 @@ local function nearest_egg(max_dist)
 end
 
 -- ============================================================
--- AUTO STEAL — tween + remote
+-- AUTO STEAL
 -- ============================================================
 spawn(function()
     while task.wait(CFG.steal_delay) do
-        if CFG.auto_steal then
+        if STATUS.auto_steal then
             local egg = nearest_egg(CFG.steal_range)
             if egg and not tweening then
                 local char = LP.Character
@@ -201,7 +192,6 @@ spawn(function()
                     local target = egg.Position + (egg.Position - hrp.Position).Unit * -4
                     tween_to(target, CFG.tween_duration)
                     task.wait(CFG.tween_duration + 0.1)
-
                     local rem = find_remote("steal", "grab", "pickup")
                     if rem then
                         pcall(function() rem:FireServer(egg) end)
@@ -219,14 +209,14 @@ end)
 local esp_cache = {}
 spawn(function()
     while task.wait(0.6) do
-        if CFG.esp_enabled then
+        if STATUS.esp then
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if (obj:IsA("Model") or obj:IsA("BasePart")) and not esp_cache[obj] then
                     local n = obj.Name:lower()
                     if n:find("egg") or n:find("brainrot") or n:find("pet") then
                         local hl = Instance.new("Highlight")
                         hl.FillColor = Color3.fromRGB(0, 230, 200)
-                        hl.OutlineColor = Color3.new(1, 1, 1)
+                        hl.OutlineColor = Color3.new(1,1,1)
                         hl.FillTransparency = 0.65
                         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                         hl.Parent = obj
@@ -244,7 +234,7 @@ spawn(function()
 end)
 
 -- ============================================================
--- APLICAR VELOCIDADE
+-- APLICAR SPEED
 -- ============================================================
 spawn(function()
     while task.wait(0.5) do
@@ -253,11 +243,308 @@ spawn(function()
             local hum = char:FindFirstChildOfClass("Humanoid")
             if hum then
                 pcall(function() hum.WalkSpeed = CFG.speed end)
+                STATUS.walk_speed = true
             end
         end
     end
 end)
 
-genv.__XynLoaded = true
-print("[Xyn] v5 carregado — Abordagem A ativa")
-print("[Xyn] Speed: " .. CFG.speed .. " | Tween: " .. CFG.tween_duration .. "s | Auto Steal: " .. tostring(CFG.auto_steal))
+-- ============================================================
+-- UI MOBILE
+-- ============================================================
+local parent_gui = (gethui and gethui()) or LP:WaitForChild("PlayerGui")
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "XynHub"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = parent_gui
+
+-- botão flutuante (abre/fecha o painel)
+local toggle = Instance.new("TextButton")
+toggle.Name = "Toggle"
+toggle.Size = UDim2.new(0, 56, 0, 56)
+toggle.Position = UDim2.new(0, 20, 0.5, -28)
+toggle.BackgroundColor3 = Color3.fromRGB(0, 230, 200)
+toggle.Text = "X"
+toggle.TextColor3 = Color3.fromRGB(10, 10, 14)
+toggle.TextSize = 24
+toggle.Font = Enum.Font.GothamBold
+toggle.AutoButtonColor = false
+toggle.Parent = gui
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(1, 0)
+toggleCorner.Parent = toggle
+
+local toggleStroke = Instance.new("UIStroke")
+toggleStroke.Color = Color3.fromRGB(0, 160, 140)
+toggleStroke.Thickness = 2
+toggleStroke.Parent = toggle
+
+-- painel principal
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.Size = UDim2.new(0, 280, 0, 400)
+panel.Position = UDim2.new(0, 20, 0.5, -200)
+panel.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+panel.BorderSizePixel = 0
+panel.Visible = false
+panel.Parent = gui
+
+local panelCorner = Instance.new("UICorner")
+panelCorner.CornerRadius = UDim.new(0, 14)
+panelCorner.Parent = panel
+
+local panelStroke = Instance.new("UIStroke")
+panelStroke.Color = Color3.fromRGB(32, 32, 42)
+panelStroke.Thickness = 1
+panelStroke.Parent = panel
+
+-- header
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 44)
+header.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+header.BorderSizePixel = 0
+header.Parent = panel
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 14)
+headerCorner.Parent = header
+
+local headerFill = Instance.new("Frame")
+headerFill.Size = UDim2.new(1, 0, 0, 14)
+headerFill.Position = UDim2.new(0, 0, 1, -14)
+headerFill.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+headerFill.BorderSizePixel = 0
+headerFill.Parent = header
+
+local title = Instance.new("TextLabel")
+title.Text = "Xyn Hub"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 15
+title.TextColor3 = Color3.fromRGB(235, 235, 245)
+title.BackgroundTransparency = 1
+title.Position = UDim2.new(0, 14, 0, 8)
+title.Size = UDim2.new(1, -60, 0, 16)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Text = "mobile • v6"
+subtitle.Font = Enum.Font.Code
+subtitle.TextSize = 10
+subtitle.TextColor3 = Color3.fromRGB(130, 130, 148)
+subtitle.BackgroundTransparency = 1
+subtitle.Position = UDim2.new(0, 14, 0, 24)
+subtitle.Size = UDim2.new(1, -60, 0, 14)
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+subtitle.Parent = header
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Text = "×"
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 22
+closeBtn.TextColor3 = Color3.fromRGB(130, 130, 148)
+closeBtn.BackgroundTransparency = 1
+closeBtn.Size = UDim2.new(0, 36, 1, 0)
+closeBtn.Position = UDim2.new(1, -36, 0, 0)
+closeBtn.Parent = header
+
+-- área scroll
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -16, 1, -56)
+scroll.Position = UDim2.new(0, 8, 0, 48)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 3
+scroll.ScrollBarImageColor3 = Color3.fromRGB(0, 230, 200)
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = panel
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 8)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = scroll
+
+local pad = Instance.new("UIPadding")
+pad.PaddingRight = UDim.new(0, 6)
+pad.PaddingTop = UDim.new(0, 4)
+pad.Parent = scroll
+
+-- helpers de UI
+local function make_section(text)
+    local s = Instance.new("Frame")
+    s.Size = UDim2.new(1, 0, 0, 22)
+    s.BackgroundTransparency = 1
+    s.Parent = scroll
+    local l = Instance.new("TextLabel")
+    l.Text = string.upper(text)
+    l.Font = Enum.Font.GothamBold
+    l.TextSize = 10
+    l.TextColor3 = Color3.fromRGB(130, 130, 148)
+    l.BackgroundTransparency = 1
+    l.Size = UDim2.new(1, 0, 1, 0)
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = s
+end
+
+local function make_status_row(label, key)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 28)
+    f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+    f.Parent = scroll
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = f
+    local l = Instance.new("TextLabel")
+    l.Text = label
+    l.Font = Enum.Font.GothamMedium
+    l.TextSize = 12
+    l.TextColor3 = Color3.fromRGB(235, 235, 245)
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.new(0, 12, 0, 0)
+    l.Size = UDim2.new(1, -60, 1, 0)
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 10, 0, 10)
+    dot.Position = UDim2.new(1, -22, 0.5, -5)
+    dot.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    dot.Parent = f
+    local dc = Instance.new("UICorner"); dc.CornerRadius = UDim.new(1, 0); dc.Parent = dot
+
+    -- update loop
+    task.spawn(function()
+        while f.Parent do
+            local ok = STATUS[key]
+            dot.BackgroundColor3 = ok and Color3.fromRGB(0, 230, 140) or Color3.fromRGB(255, 80, 90)
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function make_toggle(label, key, cb)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 42)
+    f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+    f.Parent = scroll
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = f
+    local l = Instance.new("TextLabel")
+    l.Text = label
+    l.Font = Enum.Font.GothamMedium
+    l.TextSize = 13
+    l.TextColor3 = Color3.fromRGB(235, 235, 245)
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.new(0, 12, 0, 0)
+    l.Size = UDim2.new(1, -70, 1, 0)
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
+    local pill = Instance.new("Frame")
+    pill.Size = UDim2.new(0, 40, 0, 22)
+    pill.Position = UDim2.new(1, -52, 0.5, -11)
+    pill.BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 200) or Color3.fromRGB(40, 40, 52)
+    pill.Parent = f
+    local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(1, 0); pc.Parent = pill
+    local ball = Instance.new("Frame")
+    ball.Size = UDim2.new(0, 18, 0, 18)
+    ball.Position = STATUS[key] and UDim2.new(1, -19, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+    ball.BackgroundColor3 = Color3.new(1, 1, 1)
+    ball.Parent = pill
+    local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(1, 0); bc.Parent = ball
+
+    local btn = Instance.new("TextButton")
+    btn.Text = ""
+    btn.BackgroundTransparency = 1
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.Parent = f
+
+    btn.MouseButton1Click:Connect(function()
+        STATUS[key] = not STATUS[key]
+        Tween:Create(pill, TweenInfo.new(0.2), {
+            BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 200) or Color3.fromRGB(40, 40, 52)
+        }):Play()
+        Tween:Create(ball, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {
+            Position = STATUS[key] and UDim2.new(1, -19, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+        }):Play()
+        if cb then cb(STATUS[key]) end
+    end)
+end
+
+-- seções
+make_section("Status do Bypass")
+make_status_row("Hook metamethod", "hook_metamethod")
+make_status_row("Blind anti-cheat", "blind_ac")
+make_status_row("Velocity clamp", "velocity_clamp")
+make_status_row("WalkSpeed ativo", "walk_speed")
+
+make_section("Farm")
+make_toggle("Auto Steal", "auto_steal", function(v)
+    print("[Xyn] Auto Steal: " .. tostring(v))
+end)
+make_toggle("ESP Ovos", "esp", function(v)
+    print("[Xyn] ESP: " .. tostring(v))
+end)
+
+-- abrir/fechar
+local aberto = false
+local function set_panel(vis)
+    aberto = vis
+    panel.Visible = vis
+    if vis then
+        panel.Size = UDim2.new(0, 280, 0, 0)
+        Tween:Create(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0, 280, 0, 400)
+        }):Play()
+    end
+end
+
+toggle.MouseButton1Click:Connect(function() set_panel(not aberto) end)
+closeBtn.MouseButton1Click:Connect(function() set_panel(false) end)
+
+-- drag do painel pelo header
+local dragging, drag_start, start_pos
+header.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        drag_start = i.Position
+        start_pos = panel.Position
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        local d = i.Position - drag_start
+        panel.Position = UDim2.new(start_pos.X.Scale, start_pos.X.Offset + d.X, start_pos.Y.Scale, start_pos.Y.Offset + d.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- drag do botão flutuante
+local btn_drag, btn_start, btn_origin
+toggle.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+        btn_drag = true
+        btn_start = i.Position
+        btn_origin = toggle.Position
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if btn_drag and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
+        local d = i.Position - btn_start
+        if d.Magnitude > 8 then
+            toggle.Position = UDim2.new(btn_origin.X.Scale, btn_origin.X.Offset + d.X, btn_origin.Y.Scale, btn_origin.Y.Offset + d.Y)
+        end
+    end
+end)
+UIS.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+        btn_drag = false
+    end
+end)
+
+print("[Xyn] v6 carregado — UI mobile ativa")
+print("[Xyn] toque no botão flutuante 'X' pra abrir o painel")

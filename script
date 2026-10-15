@@ -1,5 +1,5 @@
--- language: Lua, file: xyn_hub_v6.lua, target: Roblox executor Delta (mobile)
--- Xyn Hub v6 — bypass Abordagem A + UI mobile-first
+-- language: Lua, file: xyn_hub_v7.lua, target: Roblox executor Delta (mobile)
+-- Xyn Hub v7 — bypass + UI mobile + priorização por valor
 -- by Zyon99Error
 
 local Players = game:GetService("Players")
@@ -10,22 +10,89 @@ local RS      = game:GetService("ReplicatedStorage")
 local LP      = Players.LocalPlayer
 
 -- ============================================================
--- STATUS DE COMPONENTES
+-- TABELA DE VALORES — $/s por ovo (fonte: robloxdatabase, out/2026)
+-- ============================================================
+local EGG_VALUES = {
+    -- Forest
+    ["chicken"] = 1, ["dog"] = 2, ["bird"] = 8, ["owl"] = 35,
+    ["raccoon"] = 45, ["fox"] = 180, ["bear"] = 240, ["patapim"] = 1800,
+    -- Lake
+    ["frog"] = 3, ["duckling"] = 4, ["catfish"] = 12, ["turtle"] = 60,
+    ["trulimero"] = 260, ["swan"] = 320, ["axolotl"] = 2800, ["leviathan"] = 220000,
+    -- Desert
+    ["jerboa"] = 6, ["fennec"] = 18, ["camel"] = 75, ["tob"] = 325,
+    ["snake"] = 3600, ["sand spider"] = 16000, ["scorpion"] = 18500, ["sphinx"] = 280000,
+    -- Jungle
+    ["chimpanzee"] = 90, ["toucan"] = 110, ["crocodile"] = 420,
+    ["gorilla"] = 4800, ["orangutini"] = 5500, ["spider"] = 22000,
+    ["tiger"] = 28000, ["king snake"] = 3500000,
+    -- Snow
+    ["penguin"] = 140, ["walrus"] = 600, ["polar bear"] = 7000,
+    ["sabertooth"] = 35000, ["mammoth"] = 42000, ["king mammoth"] = 400000,
+    ["yeti"] = 5000000, ["ice dragon"] = 65000000,
+    -- Volcano
+    ["lava gecko"] = 180, ["lava frog"] = 850, ["flaming bull"] = 9500,
+    ["lava iguana"] = 11000, ["chillin"] = 55000, ["cerberus"] = 8000000,
+    -- Abyss Ocean
+    ["parrotfish"] = 220, ["swordfish"] = 1100, ["shark"] = 15000,
+    ["orca"] = 80000, ["whale shark"] = 700000, ["beluga"] = 850000,
+    ["kraken"] = 15000000, ["el maja"] = 130000000,
+    -- Prehistoric
+    ["dodo"] = 280, ["pterodactyl"] = 22000, ["ankylosaurus"] = 120000,
+    ["triceratops"] = 1200000, ["bronto"] = 1500000, ["trex"] = 25000000,
+    ["tralaledon"] = 32000000, ["mosasaurus"] = 180000000,
+    -- Cosmic
+    ["centapede"] = 1500, ["cosmic gecko"] = 30000, ["cosmic gorilla"] = 180000,
+    ["la vacca"] = 2200000, ["cosmic skeleton"] = 45000000, ["cosmic dragon"] = 60000000,
+    ["lunar dragon"] = 250000000, ["unicorn"] = 1000000000,
+    -- Cherry Blossom
+    ["crane"] = 4000, ["salamander"] = 74000, ["red panda"] = 450000,
+    ["snowy owl"] = 7500000, ["koi"] = 12000000, ["stag"] = 145000000,
+    ["kitsune"] = 1800000000,
+    -- Titan Temple (valores aproximados)
+    ["titan"] = 2000000000, ["gorilla king"] = 880000000, ["nightflame"] = 3000000000,
+    -- Event / Rift (fallback)
+    ["mecha dreadscale"] = 4000000000, ["shattered colossus"] = 3500000000,
+}
+
+-- normaliza nome pra match
+local function normalize(s)
+    return s:lower():gsub("%s+", " "):gsub(" egg", ""):gsub("_", " ")
+end
+
+-- retorna valor do ovo pelo nome (match parcial)
+local function egg_value(name)
+    local n = normalize(name)
+    -- match exato primeiro
+    if EGG_VALUES[n] then return EGG_VALUES[n] end
+    -- match parcial — pega o maior valor que casa
+    local best = 0
+    for key, val in pairs(EGG_VALUES) do
+        if n:find(key, 1, true) and val > best then
+            best = val
+        end
+    end
+    return best
+end
+
+-- ============================================================
+-- STATUS / CONFIG
 -- ============================================================
 local STATUS = {
     hook_metamethod = false,
-    hook_function   = false,
     blind_ac        = false,
     velocity_clamp  = false,
     walk_speed      = false,
     auto_steal      = false,
     esp             = false,
+    prioritize_value = true,   -- NOVO: priorizar maior valor
+    min_value       = 0,       -- NOVO: valor mínimo do ovo a roubar
 }
 
 local CFG = {
     speed          = 55,
     tween_duration = 0.18,
-    steal_range    = 60,
+    steal_range    = 80,
     steal_delay    = 0.4,
 }
 
@@ -73,7 +140,6 @@ if type(hookfunction) == "function" and type(getgc) == "function" and type(islcl
             end
         end
     end)
-
     if ok_gc then
         local blinded = 0
         for _, fn in ipairs(targets) do
@@ -88,7 +154,6 @@ if type(hookfunction) == "function" and type(getgc) == "function" and type(islcl
             end)
             if ok then blinded = blinded + 1 end
         end
-        STATUS.hook_function = blinded > 0
         STATUS.blind_ac = blinded > 0
     end
 end
@@ -104,7 +169,6 @@ RunS.Heartbeat:Connect(function()
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     local now = tick()
     local dt  = now - last_time
     if dt > 0.1 then
@@ -112,7 +176,6 @@ RunS.Heartbeat:Connect(function()
         last_time = now
         return
     end
-
     local delta = hrp.Position - last_pos
     local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude / dt
     if horiz > 70 then
@@ -160,22 +223,51 @@ local function find_remote(...)
     end
 end
 
-local function nearest_egg(max_dist)
+-- ============================================================
+-- SELEÇÃO DE OVO — prioriza MAIOR VALOR
+-- ============================================================
+local function scan_eggs(max_dist)
     local char = LP.Character
-    if not char then return nil end
+    if not char then return {} end
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
-    local best, best_d = nil, max_dist or math.huge
+    if not hrp then return {} end
+
+    local found = {}
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") then
             local n = obj.Name:lower()
             if n:find("egg") or n:find("brainrot") or n:find("pet") then
                 local d = (obj.Position - hrp.Position).Magnitude
-                if d < best_d then best, best_d = obj, d end
+                if d <= max_dist then
+                    local val = egg_value(obj.Name)
+                    table.insert(found, { part = obj, value = val, dist = d })
+                end
             end
         end
     end
-    return best, best_d
+    return found
+end
+
+local function best_egg(max_dist)
+    local eggs = scan_eggs(max_dist)
+    if #eggs == 0 then return nil end
+
+    if STATUS.prioritize_value then
+        -- ordena por valor (maior primeiro), ignora os abaixo do mínimo
+        local filtered = {}
+        for _, e in ipairs(eggs) do
+            if e.value >= STATUS.min_value then
+                table.insert(filtered, e)
+            end
+        end
+        if #filtered == 0 then filtered = eggs end
+        table.sort(filtered, function(a, b) return a.value > b.value end)
+        return filtered[1].part, filtered[1].value, filtered[1].dist
+    else
+        -- comportamento antigo: ovo mais próximo
+        table.sort(eggs, function(a, b) return a.dist < b.dist end)
+        return eggs[1].part, eggs[1].value, eggs[1].dist
+    end
 end
 
 -- ============================================================
@@ -184,7 +276,7 @@ end
 spawn(function()
     while task.wait(CFG.steal_delay) do
         if STATUS.auto_steal then
-            local egg = nearest_egg(CFG.steal_range)
+            local egg, value, dist = best_egg(CFG.steal_range)
             if egg and not tweening then
                 local char = LP.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -192,6 +284,7 @@ spawn(function()
                     local target = egg.Position + (egg.Position - hrp.Position).Unit * -4
                     tween_to(target, CFG.tween_duration)
                     task.wait(CFG.tween_duration + 0.1)
+
                     local rem = find_remote("steal", "grab", "pickup")
                     if rem then
                         pcall(function() rem:FireServer(egg) end)
@@ -214,8 +307,16 @@ spawn(function()
                 if (obj:IsA("Model") or obj:IsA("BasePart")) and not esp_cache[obj] then
                     local n = obj.Name:lower()
                     if n:find("egg") or n:find("brainrot") or n:find("pet") then
+                        local val = egg_value(obj.Name)
                         local hl = Instance.new("Highlight")
-                        hl.FillColor = Color3.fromRGB(0, 230, 200)
+                        -- cor por valor: verde barato, ciano médio, vermelho caro
+                        if val >= 1000000 then
+                            hl.FillColor = Color3.fromRGB(255, 60, 60)
+                        elseif val >= 1000 then
+                            hl.FillColor = Color3.fromRGB(0, 230, 200)
+                        else
+                            hl.FillColor = Color3.fromRGB(80, 200, 100)
+                        end
                         hl.OutlineColor = Color3.new(1,1,1)
                         hl.FillTransparency = 0.65
                         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -234,7 +335,7 @@ spawn(function()
 end)
 
 -- ============================================================
--- APLICAR SPEED
+-- VELOCIDADE
 -- ============================================================
 spawn(function()
     while task.wait(0.5) do
@@ -253,7 +354,6 @@ end)
 -- UI MOBILE
 -- ============================================================
 local parent_gui = (gethui and gethui()) or LP:WaitForChild("PlayerGui")
-
 local gui = Instance.new("ScreenGui")
 gui.Name = "XynHub"
 gui.ResetOnSpawn = false
@@ -261,9 +361,7 @@ gui.IgnoreGuiInset = true
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = parent_gui
 
--- botão flutuante (abre/fecha o painel)
 local toggle = Instance.new("TextButton")
-toggle.Name = "Toggle"
 toggle.Size = UDim2.new(0, 56, 0, 56)
 toggle.Position = UDim2.new(0, 20, 0.5, -28)
 toggle.BackgroundColor3 = Color3.fromRGB(0, 230, 200)
@@ -273,52 +371,24 @@ toggle.TextSize = 24
 toggle.Font = Enum.Font.GothamBold
 toggle.AutoButtonColor = false
 toggle.Parent = gui
+local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(1, 0); tc.Parent = toggle
 
-local toggleCorner = Instance.new("UICorner")
-toggleCorner.CornerRadius = UDim.new(1, 0)
-toggleCorner.Parent = toggle
-
-local toggleStroke = Instance.new("UIStroke")
-toggleStroke.Color = Color3.fromRGB(0, 160, 140)
-toggleStroke.Thickness = 2
-toggleStroke.Parent = toggle
-
--- painel principal
 local panel = Instance.new("Frame")
-panel.Name = "Panel"
-panel.Size = UDim2.new(0, 280, 0, 400)
-panel.Position = UDim2.new(0, 20, 0.5, -200)
+panel.Size = UDim2.new(0, 280, 0, 440)
+panel.Position = UDim2.new(0, 20, 0.5, -220)
 panel.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
 panel.BorderSizePixel = 0
 panel.Visible = false
 panel.Parent = gui
+local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(0, 14); pc.Parent = panel
+local ps = Instance.new("UIStroke"); ps.Color = Color3.fromRGB(32, 32, 42); ps.Parent = panel
 
-local panelCorner = Instance.new("UICorner")
-panelCorner.CornerRadius = UDim.new(0, 14)
-panelCorner.Parent = panel
-
-local panelStroke = Instance.new("UIStroke")
-panelStroke.Color = Color3.fromRGB(32, 32, 42)
-panelStroke.Thickness = 1
-panelStroke.Parent = panel
-
--- header
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 44)
 header.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
 header.BorderSizePixel = 0
 header.Parent = panel
-
-local headerCorner = Instance.new("UICorner")
-headerCorner.CornerRadius = UDim.new(0, 14)
-headerCorner.Parent = header
-
-local headerFill = Instance.new("Frame")
-headerFill.Size = UDim2.new(1, 0, 0, 14)
-headerFill.Position = UDim2.new(0, 0, 1, -14)
-headerFill.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-headerFill.BorderSizePixel = 0
-headerFill.Parent = header
+local hc = Instance.new("UICorner"); hc.CornerRadius = UDim.new(0, 14); hc.Parent = header
 
 local title = Instance.new("TextLabel")
 title.Text = "Xyn Hub"
@@ -331,16 +401,16 @@ title.Size = UDim2.new(1, -60, 0, 16)
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
-local subtitle = Instance.new("TextLabel")
-subtitle.Text = "mobile • v6"
-subtitle.Font = Enum.Font.Code
-subtitle.TextSize = 10
-subtitle.TextColor3 = Color3.fromRGB(130, 130, 148)
-subtitle.BackgroundTransparency = 1
-subtitle.Position = UDim2.new(0, 14, 0, 24)
-subtitle.Size = UDim2.new(1, -60, 0, 14)
-subtitle.TextXAlignment = Enum.TextXAlignment.Left
-subtitle.Parent = header
+local sub = Instance.new("TextLabel")
+sub.Text = "v7 • value priority"
+sub.Font = Enum.Font.Code
+sub.TextSize = 10
+sub.TextColor3 = Color3.fromRGB(130, 130, 148)
+sub.BackgroundTransparency = 1
+sub.Position = UDim2.new(0, 14, 0, 24)
+sub.Size = UDim2.new(1, -60, 0, 14)
+sub.TextXAlignment = Enum.TextXAlignment.Left
+sub.Parent = header
 
 local closeBtn = Instance.new("TextButton")
 closeBtn.Text = "×"
@@ -352,7 +422,6 @@ closeBtn.Size = UDim2.new(0, 36, 1, 0)
 closeBtn.Position = UDim2.new(1, -36, 0, 0)
 closeBtn.Parent = header
 
--- área scroll
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.new(1, -16, 1, -56)
 scroll.Position = UDim2.new(0, 8, 0, 48)
@@ -363,18 +432,9 @@ scroll.ScrollBarImageColor3 = Color3.fromRGB(0, 230, 200)
 scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 scroll.Parent = panel
+local sl = Instance.new("UIListLayout"); sl.Padding = UDim.new(0, 8); sl.Parent = scroll
+local sp = Instance.new("UIPadding"); sp.PaddingRight = UDim.new(0, 6); sp.PaddingTop = UDim.new(0, 4); sp.Parent = scroll
 
-local layout = Instance.new("UIListLayout")
-layout.Padding = UDim.new(0, 8)
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Parent = scroll
-
-local pad = Instance.new("UIPadding")
-pad.PaddingRight = UDim.new(0, 6)
-pad.PaddingTop = UDim.new(0, 4)
-pad.Parent = scroll
-
--- helpers de UI
 local function make_section(text)
     local s = Instance.new("Frame")
     s.Size = UDim2.new(1, 0, 0, 22)
@@ -391,7 +451,7 @@ local function make_section(text)
     l.Parent = s
 end
 
-local function make_status_row(label, key)
+local function make_status(label, key)
     local f = Instance.new("Frame")
     f.Size = UDim2.new(1, 0, 0, 28)
     f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
@@ -413,12 +473,9 @@ local function make_status_row(label, key)
     dot.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
     dot.Parent = f
     local dc = Instance.new("UICorner"); dc.CornerRadius = UDim.new(1, 0); dc.Parent = dot
-
-    -- update loop
     task.spawn(function()
         while f.Parent do
-            local ok = STATUS[key]
-            dot.BackgroundColor3 = ok and Color3.fromRGB(0, 230, 140) or Color3.fromRGB(255, 80, 90)
+            dot.BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 140) or Color3.fromRGB(255, 80, 90)
             task.wait(0.5)
         end
     end)
@@ -445,20 +502,18 @@ local function make_toggle(label, key, cb)
     pill.Position = UDim2.new(1, -52, 0.5, -11)
     pill.BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 200) or Color3.fromRGB(40, 40, 52)
     pill.Parent = f
-    local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(1, 0); pc.Parent = pill
+    local pc2 = Instance.new("UICorner"); pc2.CornerRadius = UDim.new(1, 0); pc2.Parent = pill
     local ball = Instance.new("Frame")
     ball.Size = UDim2.new(0, 18, 0, 18)
     ball.Position = STATUS[key] and UDim2.new(1, -19, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
-    ball.BackgroundColor3 = Color3.new(1, 1, 1)
+    ball.BackgroundColor3 = Color3.new(1,1,1)
     ball.Parent = pill
     local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(1, 0); bc.Parent = ball
-
     local btn = Instance.new("TextButton")
     btn.Text = ""
     btn.BackgroundTransparency = 1
     btn.Size = UDim2.new(1, 0, 1, 0)
     btn.Parent = f
-
     btn.MouseButton1Click:Connect(function()
         STATUS[key] = not STATUS[key]
         Tween:Create(pill, TweenInfo.new(0.2), {
@@ -471,20 +526,91 @@ local function make_toggle(label, key, cb)
     end)
 end
 
+local function make_slider(label, min, max, default, suffix, cb)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 50)
+    f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+    f.Parent = scroll
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = f
+    local l = Instance.new("TextLabel")
+    l.Text = label
+    l.Font = Enum.Font.GothamMedium
+    l.TextSize = 12
+    l.TextColor3 = Color3.fromRGB(235, 235, 245)
+    l.BackgroundTransparency = 1
+    l.Position = UDim2.new(0, 12, 0, 4)
+    l.Size = UDim2.new(1, -90, 0, 16)
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
+    local valLbl = Instance.new("TextLabel")
+    valLbl.Text = tostring(default) .. (suffix or "")
+    valLbl.Font = Enum.Font.Code
+    valLbl.TextSize = 11
+    valLbl.TextColor3 = Color3.fromRGB(0, 230, 200)
+    valLbl.BackgroundTransparency = 1
+    valLbl.Position = UDim2.new(1, -80, 0, 4)
+    valLbl.Size = UDim2.new(0, 68, 0, 16)
+    valLbl.TextXAlignment = Enum.TextXAlignment.Right
+    valLbl.Parent = f
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1, -24, 0, 4)
+    track.Position = UDim2.new(0, 12, 0, 34)
+    track.BackgroundColor3 = Color3.fromRGB(40, 40, 52)
+    track.Parent = f
+    local tc2 = Instance.new("UICorner"); tc2.CornerRadius = UDim.new(1, 0); tc2.Parent = track
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(0, 230, 200)
+    fill.Parent = track
+    local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(1, 0); fc.Parent = fill
+    local dragging = false
+    local function setFromX(x)
+        local rel = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        local val = math.floor((min + (max - min) * rel) * 100 + 0.5) / 100
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        valLbl.Text = tostring(val) .. (suffix or "")
+        if cb then cb(val) end
+    end
+    local drag = Instance.new("TextButton")
+    drag.Text = ""
+    drag.BackgroundTransparency = 1
+    drag.Size = UDim2.new(1, 0, 0, 24)
+    drag.Position = UDim2.new(0, 0, 0, 26)
+    drag.Parent = f
+    drag.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            setFromX(i.Position.X)
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            setFromX(i.Position.X)
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
 -- seções
-make_section("Status do Bypass")
-make_status_row("Hook metamethod", "hook_metamethod")
-make_status_row("Blind anti-cheat", "blind_ac")
-make_status_row("Velocity clamp", "velocity_clamp")
-make_status_row("WalkSpeed ativo", "walk_speed")
+make_section("Bypass")
+make_status("Hook metamethod", "hook_metamethod")
+make_status("Blind anti-cheat", "blind_ac")
+make_status("Velocity clamp", "velocity_clamp")
+make_status("WalkSpeed", "walk_speed")
 
 make_section("Farm")
-make_toggle("Auto Steal", "auto_steal", function(v)
-    print("[Xyn] Auto Steal: " .. tostring(v))
+make_toggle("Auto Steal", "auto_steal")
+make_toggle("Priorizar Maior Valor", "prioritize_value", function(v)
+    print("[Xyn] Prioridade por valor: " .. tostring(v))
 end)
-make_toggle("ESP Ovos", "esp", function(v)
-    print("[Xyn] ESP: " .. tostring(v))
+make_slider("Valor Mínimo ($/s)", 0, 10000000, 0, "", function(v)
+    STATUS.min_value = v
 end)
+make_toggle("ESP Ovos", "esp")
 
 -- abrir/fechar
 local aberto = false
@@ -494,15 +620,14 @@ local function set_panel(vis)
     if vis then
         panel.Size = UDim2.new(0, 280, 0, 0)
         Tween:Create(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0, 280, 0, 400)
+            Size = UDim2.new(0, 280, 0, 440)
         }):Play()
     end
 end
-
 toggle.MouseButton1Click:Connect(function() set_panel(not aberto) end)
 closeBtn.MouseButton1Click:Connect(function() set_panel(false) end)
 
--- drag do painel pelo header
+-- drag do painel
 local dragging, drag_start, start_pos
 header.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -546,5 +671,4 @@ UIS.InputEnded:Connect(function(i)
     end
 end)
 
-print("[Xyn] v6 carregado — UI mobile ativa")
-print("[Xyn] toque no botão flutuante 'X' pra abrir o painel")
+print("[Xyn] v7 carregado — priorização por valor ativa")

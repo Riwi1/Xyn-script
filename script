@@ -1,122 +1,108 @@
--- language: Lua, file: xyn_hub_v4.lua, target: Roblox executor (Wave/Volt/Potassium)
--- Xyn Hub v4 — stealth injection + bypass multi-camada + biomas corretos
+-- language: Lua, file: xyn_hub_v5.lua, target: Roblox executor (Delta)
+-- Xyn Hub v5 — Abordagem A: speed bypass completo + auto steal tween
 -- by Zyon99Error
 
 -- ============================================================
--- FASE 0 — ANTI-DETECÇÃO DE AMBIENTE (executar antes de qualquer coisa)
+-- CONFIG
 -- ============================================================
-
--- 0.1 — Spoof de identidade do executor
-pcall(function()
-    if type(identifyexecutor) == "function" then
-        local old_identify = identifyexecutor
-        identifyexecutor = function(...)
-            return "Roblox", "1.0.0"
-        end
-    end
-end)
-
--- 0.2 — Limpeza de referências de hook antigas no GC
-pcall(function()
-    for _, v in next, getgc(true) do
-        if type(v) == "function" and islclosure(v) then
-            local ok, src = pcall(debug.info, v, "s")
-            if ok and type(src) == "string" then
-                if src:find("hookmetamethod") or src:find("hookfunction") or src:find("identifyexecutor") then
-                    -- função de hook antiga detectada, será sobrescrita depois
-                end
-            end
-        end
-    end
-    collectgarbage()
-end)
-
-print("[Xyn] FASE 0 — spoof e limpeza concluídos")
-
--- ============================================================
--- FASE 1 — BYPASS DE ANTI-CHEAT EM 4 CAMADAS
--- ============================================================
+local CFG = {
+    speed          = 55,      -- valor real aplicado localmente
+    tween_duration = 0.18,    -- tempo do tween até o ovo
+    steal_range    = 60,      -- raio de busca de ovo
+    steal_delay    = 0.35,    -- intervalo entre tentativas
+    auto_steal     = false,
+    esp_enabled    = false,
+}
 
 local Players  = game:GetService("Players")
 local RunS     = game:GetService("RunService")
 local Tween    = game:GetService("TweenService")
 local RS       = game:GetService("ReplicatedStorage")
 local LP       = Players.LocalPlayer
+local genv     = type(getgenv) == "function" and getgenv() or nil
 
-local CFG = {
-    speed_target   = 55,
-    tween_duration = 0.18,
-    esp_enabled    = false,
-    auto_steal     = false,
-    steal_range    = 60,
-    steal_delay    = 0.35,
-}
+-- ============================================================
+-- CHECK DE FUNÇÕES — avisa se o executor não suporta
+-- ============================================================
+local missing = {}
+if type(hookmetamethod) ~= "function" then table.insert(missing, "hookmetamethod") end
+if type(hookfunction) ~= "function"   then table.insert(missing, "hookfunction")   end
+if type(getgc) ~= "function"          then table.insert(missing, "getgc")          end
+if type(islclosure) ~= "function"     then table.insert(missing, "islclosure")     end
+if type(debug) ~= "table" or type(debug.info) ~= "function" or type(debug.getupvalues) ~= "function" then
+    table.insert(missing, "debug.info/getupvalues")
+end
 
--- 1.1 — Hook __newindex para spoof de WalkSpeed
-local original_speed = 16
-local real_speed     = 16
-local old_newindex
+if #missing > 0 then
+    return warn("[Xyn] Executor não suporta o bypass — faltando: " .. table.concat(missing, ", "))
+end
+if genv and genv.__XynLoaded then
+    return warn("[Xyn] já está rodando")
+end
 
-local function stealth_newindex(self, key, value)
-    if key == "WalkSpeed" and self:IsA("Humanoid") then
-        real_speed = value
-        if checkcaller() then
-            return old_newindex(self, key, value)
-        else
-            return old_newindex(self, key, original_speed)
+print("[Xyn] executor OK — todas as funções necessárias presentes")
+
+-- ============================================================
+-- CAMADA 1 — HOOK __newindex (WalkSpeed spoof)
+-- ============================================================
+local lock = CFG.speed
+local old_index
+local new_index = function(self, key, value)
+    if lock and key == "WalkSpeed" and value ~= lock then
+        local char = LP.Character
+        if char and self == char:FindFirstChildOfClass("Humanoid") then
+            return
         end
     end
-    return old_newindex(self, key, value)
+    return old_index(self, key, value)
 end
 
-if hookmetamethod and checkcaller then
-    old_newindex = hookmetamethod(game, "__newindex", stealth_newindex)
+if type(newcclosure) == "function" then
+    new_index = newcclosure(new_index)
 end
-print("[Xyn] FASE 1.1 — WalkSpeed spoof ativo")
+old_index = hookmetamethod(game, "__newindex", new_index)
+print("[Xyn] camada 1 — WalkSpeed spoof ativo")
 
--- 1.2 — Cegar funções do anti-cheat que checam velocidade/posição
-local function blind_ac()
-    local targets = {}
-    local count = 0
-    for _, fn in next, getgc() do
-        if typeof(fn) == "function" and islclosure(fn) then
-            local ok_src, src = pcall(debug.info, fn, "s")
-            if ok_src and type(src) == "string" then
-                if src:find("WalkSpeed") or src:find("AssemblyLinearVelocity")
-                   or src:find("ContentCatalog%.Runtime") then
-                    table.insert(targets, fn)
-                end
+-- ============================================================
+-- CAMADA 2 — CEGAR FUNÇÕES DO ANTI-CHEAT
+-- ============================================================
+local targets = {}
+for _, fn in next, getgc() do
+    if typeof(fn) == "function" and islclosure(fn) then
+        local ok_src, src = pcall(debug.info, fn, "s")
+        if ok_src and type(src) == "string" and src:find("ContentCatalog%.Runtime") then
+            local ok_a, params = pcall(debug.info, fn, "a")
+            local ok_u, ups    = pcall(debug.getupvalues, fn)
+            if ok_a and params == 3 and ok_u and type(ups) == "table" and #ups == 5 then
+                table.insert(targets, fn)
             end
         end
     end
-    for _, fn in ipairs(targets) do
-        pcall(function()
-            local ok, orig = pcall(hookfunction, fn, function(a, b, c)
-                local sample = orig and orig(a, b, c) or nil
-                if type(sample) == "table" and sample.WalkSpeed then
-                    sample.WalkSpeed = 100000
-                end
-                return sample
-            end)
-            if ok then count = count + 1 end
-        end)
-    end
-    return count
 end
 
-local blinded = blind_ac()
-print("[Xyn] FASE 1.2 — " .. blinded .. " funções do anti-cheat cegadas")
-
--- 1.3 — Bypass de Remote Spy (bloqueia detecção de hook)
-pcall(function()
-    local AntiCheat = filtergc("function", {Constants = {"GetFullName", "gmatch"}}, true)
-    if AntiCheat then
-        debug.setconstant(AntiCheat, 6, "nil")
-        print("[Xyn] FASE 1.3 — Remote Spy bypass aplicado")
+local blinded = 0
+for _, fn in ipairs(targets) do
+    local orig
+    local wrapper = function(a, b, c)
+        local sample = orig(a, b, c)
+        if type(sample) == "table" and sample.WalkSpeed and sample.Position and sample.Timestamp then
+            sample.WalkSpeed = 100000
+        end
+        return sample
     end
-end)
+    if type(newlclosure) == "function" then
+        wrapper = newlclosure(wrapper)
+    end
+    local ok = pcall(function() orig = hookfunction(fn, wrapper) end)
+    if ok and type(orig) == "function" then
+        blinded = blinded + 1
+    end
+end
+print("[Xyn] camada 2 — " .. blinded .. " funções do anti-cheat cegadas")
 
--- 1.4 — Velocity clamp (teto de 70 studs/s)
+-- ============================================================
+-- CAMADA 3 — VELOCITY CLAMP (teto de 70 studs/s)
+-- ============================================================
 local last_pos  = Vector3.new(0, 0, 0)
 local last_time = tick()
 
@@ -127,9 +113,9 @@ RunS.Heartbeat:Connect(function()
     if not hrp then return end
 
     local now = tick()
-    local dt = now - last_time
+    local dt  = now - last_time
     if dt > 0.1 then
-        last_pos = hrp.Position
+        last_pos  = hrp.Position
         last_time = now
         return
     end
@@ -143,31 +129,13 @@ RunS.Heartbeat:Connect(function()
             hrp.AssemblyLinearVelocity.Z * 0.5
         )
     end
-    last_pos = hrp.Position
+    last_pos  = hrp.Position
     last_time = now
 end)
-print("[Xyn] FASE 1.4 — velocity clamp ativo")
+print("[Xyn] camada 3 — velocity clamp ativo")
 
 -- ============================================================
--- FASE 2 — BIOMAS CORRIGIDOS (12 biomas, out/2026)
--- ============================================================
-local BIOMES = {
-    {name="Forest",         speed=0,           guardian="Chicken"},
-    {name="Lake",           speed=900,         guardian="Swan"},
-    {name="Desert",         speed=10000,       guardian="Scorpion"},
-    {name="Jungle",         speed=40000,       guardian="Tiger"},
-    {name="Snow",           speed=170000,      guardian="Yeti"},
-    {name="Volcano",        speed=700000,      guardian="Hellhound"},
-    {name="Abyss Ocean",    speed=2500000,     guardian="Moby"},
-    {name="Prehistoric",    speed=18000000,    guardian="T-Rex"},
-    {name="Cosmic",         speed=700000000,   guardian="Dragon"},
-    {name="Cherry Blossom", speed=2500000000,  guardian="Nine-tailed fox"},
-    {name="Titan Temple",   speed=7000000000,  guardian="Gorilla King"},
-    {name="Angels & Demons",speed=20000000000, guardian="Angel/Demon/Hybrid"},
-}
-
--- ============================================================
--- FASE 3 — TWEEN MOVEMENT (substitui teleporte)
+-- TWEEN MOVEMENT
 -- ============================================================
 local tweening = false
 local function tween_to(pos, duration)
@@ -175,8 +143,10 @@ local function tween_to(pos, duration)
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    local t = Tween:Create(hrp, TweenInfo.new(duration or CFG.tween_duration,
-        Enum.EasingStyle.Linear, Enum.EasingDirection.Out), {CFrame = CFrame.new(pos)})
+
+    local t = Tween:Create(hrp,
+        TweenInfo.new(duration or CFG.tween_duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+        { CFrame = CFrame.new(pos) })
     tweening = true
     t:Play()
     t:Completed:Wait()
@@ -184,7 +154,7 @@ local function tween_to(pos, duration)
 end
 
 -- ============================================================
--- FASE 4 — HELPERS
+-- HELPERS
 -- ============================================================
 local function find_remote(...)
     local pats = {...}
@@ -203,6 +173,7 @@ local function nearest_egg(max_dist)
     if not char then return nil end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
+
     local best, best_d = nil, max_dist or math.huge
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("BasePart") then
@@ -217,7 +188,7 @@ local function nearest_egg(max_dist)
 end
 
 -- ============================================================
--- FASE 5 — LOOPS DE FARM
+-- AUTO STEAL — tween + remote
 -- ============================================================
 spawn(function()
     while task.wait(CFG.steal_delay) do
@@ -228,8 +199,9 @@ spawn(function()
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then
                     local target = egg.Position + (egg.Position - hrp.Position).Unit * -4
-                    tween_to(target, 0.22)
-                    task.wait(0.28)
+                    tween_to(target, CFG.tween_duration)
+                    task.wait(CFG.tween_duration + 0.1)
+
                     local rem = find_remote("steal", "grab", "pickup")
                     if rem then
                         pcall(function() rem:FireServer(egg) end)
@@ -241,7 +213,9 @@ spawn(function()
     end
 end)
 
+-- ============================================================
 -- ESP
+-- ============================================================
 local esp_cache = {}
 spawn(function()
     while task.wait(0.6) do
@@ -252,7 +226,7 @@ spawn(function()
                     if n:find("egg") or n:find("brainrot") or n:find("pet") then
                         local hl = Instance.new("Highlight")
                         hl.FillColor = Color3.fromRGB(0, 230, 200)
-                        hl.OutlineColor = Color3.new(1,1,1)
+                        hl.OutlineColor = Color3.new(1, 1, 1)
                         hl.FillTransparency = 0.65
                         hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                         hl.Parent = obj
@@ -269,31 +243,21 @@ spawn(function()
     end
 end)
 
--- Aplicar velocidade real
+-- ============================================================
+-- APLICAR VELOCIDADE
+-- ============================================================
 spawn(function()
     while task.wait(0.5) do
         local char = LP.Character
         if char then
             local hum = char:FindFirstChildOfClass("Humanoid")
             if hum then
-                real_speed = CFG.speed_target
-                hum.WalkSpeed = checkcaller() and CFG.speed_target or original_speed
+                pcall(function() hum.WalkSpeed = CFG.speed end)
             end
         end
     end
 end)
 
--- ============================================================
--- FASE 6 — STATUS DE BIOMA
--- ============================================================
-local function current_biome()
-    local best = BIOMES[1]
-    for _, b in ipairs(BIOMES) do
-        if real_speed >= b.speed then best = b end
-    end
-    return best
-end
-
-print("[Xyn] v4 carregado — injeção stealth + bypass 4 camadas")
-local b = current_biome()
-print(string.format("[Xyn] Bioma atual: %s | Guardião: %s", b.name, b.guardian))
+genv.__XynLoaded = true
+print("[Xyn] v5 carregado — Abordagem A ativa")
+print("[Xyn] Speed: " .. CFG.speed .. " | Tween: " .. CFG.tween_duration .. "s | Auto Steal: " .. tostring(CFG.auto_steal))

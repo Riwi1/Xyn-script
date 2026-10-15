@@ -1,63 +1,50 @@
--- language: Lua, file: blox_fruits_hub.lua
--- Blox Fruits professional hub | Rayfield UI | Keyless
--- Features: Auto Farm, ESP, Teleport, Misc | Mobile + PC
--- Suporte: Xeno, Delta, Solara, Arceus X, Codex
+-- language: Lua, file: bf_afk_hub.lua
+-- Blox Fruits AFK Farm Hub | Tween-safe movement | Anti-AFK real
+-- Features: Auto Farm AFK, Auto Quest, Auto Chest, Auto Fruit, ESP, Anti-AFK
+-- Suporte: Xeno, Delta, Solara, Codex, Arceus X | Mobile + PC
 
 -- ============================================================
--- VERIFICAÇÃO DE JOGO
+-- VERIFICAÇÃO
 -- ============================================================
 if game.PlaceId ~= 2753915549
    and game.PlaceId ~= 4442272183
    and game.PlaceId ~= 7449423635 then
-    return warn("[Blox Hub] Execute dentro do Blox Fruits.")
+    return warn("[BF AFK] Execute dentro do Blox Fruits.")
 end
 
 -- ============================================================
--- CARREGAMENTO DA UI (Rayfield)
+-- UI
 -- ============================================================
-local Rayfield = loadstring(game:HttpGet(
-    'https://sirius.menu/rayfield'
-))()
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
+local TweenService   = game:GetService("TweenService")
+local VirtualUser    = game:GetService("VirtualUser")
+local Workspace      = game:GetService("Workspace")
+local LocalPlayer    = Players.LocalPlayer
+local Camera         = Workspace.CurrentCamera
 
 -- ============================================================
--- SERVIÇOS
+-- ESTADO
 -- ============================================================
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
-local HttpService = game:GetService("HttpService")
-
--- ============================================================
--- ESTADO GLOBAL
--- ============================================================
-getgenv().BF_Hub = {
-    autoFarm          = false,
-    autoQuest         = false,
-    autoChest         = false,
-    autoFruit         = false,
-    autoRaid          = false,
-    killAura          = false,
-    espPlayer         = false,
-    espFruit          = false,
-    espChest          = false,
-    espNPC            = false,
-    antiAFK           = true,
-    noclip            = false,
-    speedHack         = false,
-    speedValue        = 60,
-    jumpPower         = false,
-    jumpValue         = 80,
-    selectedIsland    = "Ilha 1",
-    farmMethod        = "Melee",
-    team              = "Piratas",
+getgenv().BF_AFK = {
+    autoFarm      = false,
+    autoQuest     = false,
+    autoChest     = false,
+    autoFruit     = false,
+    killAura      = false,
+    espFruit      = false,
+    espChest      = false,
+    antiAFK       = true,
+    tweenSpeed    = 0.18,
+    farmDistance  = 6,
+    selectedIsland = "Ilha 1",
 }
-local S = getgenv().BF_Hub
+local S = getgenv().BF_AFK
 
 -- ============================================================
--- FUNÇÕES AUXILIARES
+-- UTIL
 -- ============================================================
 
 local function getChar()
@@ -66,74 +53,76 @@ end
 
 local function getHRP()
     local c = getChar()
-    return c:FindFirstChild("HumanoidRootPart")
+    return c and c:FindFirstChild("HumanoidRootPart")
 end
 
 local function getHum()
     local c = getChar()
-    return c:FindFirstChildOfClass("Humanoid")
+    return c and c:FindFirstChildOfClass("Humanoid")
 end
 
+local function getRoot()
+    local c = getChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+-- ============================================================
+-- TWEEN MOVER — o coração do negócio
+-- Move o player suavemente até um destino.
+-- ============================================================
 local function tweenTo(position, duration)
-    duration = duration or 0.1
     local hrp = getHRP()
-    if not hrp then return end
-    local tweenService = game:GetService("TweenService")
-    local info = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+    if not hrp then return false end
+
+    duration = duration or S.tweenSpeed
+
+    local dist = (position - hrp.Position).Magnitude
+    -- Escala duração pela distância: longe = mais tempo
+    -- Evita "teleporte disfarçado" que o anticheat flagaria
+    local scaled = math.clamp(duration * (dist / 50), 0.1, 1.2)
+
+    local info = TweenInfo.new(scaled, Enum.EasingStyle.Linear)
     local goal = {CFrame = CFrame.new(position)}
-    local tween = tweenService:Create(hrp, info, goal)
+    local tween = TweenService:Create(hrp, info, goal)
     tween:Play()
     tween.Completed:Wait()
+    return true
 end
 
 -- ============================================================
--- TELEPORTE
+-- ANTI-AFK REAL
+-- Desabilita a conexão Idled + simula input a cada 50s
 -- ============================================================
-
-local ISLANDS = {
-    ["Ilha 1"]     = Vector3.new(1073, 18, 1401),
-    ["Ilha 2"]     = Vector3.new(3972, 12, 2919),
-    ["Ilha 3"]     = Vector3.new(-1002, 21, 5120),
-    ["Ilha 4"]     = Vector3.new(1006, 21, 2993),
-    ["Ilha 5"]     = Vector3.new(-3629, 20, 1783),
-    ["Ilha 6"]     = Vector3.new(-1131, 21, 6581),
-    ["Ilha 7"]     = Vector3.new(-5123, 21, 2953),
-    ["Ilha 8"]     = Vector3.new(3726, 21, -1527),
-    ["Ilha 9"]     = Vector3.new(-772, 21, -4201),
-    ["Ilha 10"]    = Vector3.new(-3674, 21, -2385),
-    ["Ilha 11"]    = Vector3.new(-1333, 21, -6632),
-    ["Ilha 12"]    = Vector3.new(4565, 21, -2933),
-    ["Ilha 13"]    = Vector3.new(3328, 21, 7402),
-    ["Ilha 14"]    = Vector3.new(4622, 21, 5589),
-    ["Ilha 15"]    = Vector3.new(1022, 21, 8894),
-    ["Ilha 16"]    = Vector3.new(-3748, 21, 8388),
-    ["Ilha 17"]    = Vector3.new(-2933, 21, 9138),
-    ["Ilha 18"]    = Vector3.new(2023, 21, 9999),
-    ["Ilha 19"]    = Vector3.new(-3823, 21, 12446),
-    ["Ilha 20"]    = Vector3.new(1823, 21, 12446),
-    ["Marine Ford"] = Vector3.new(-4243, 21, 14546),
-    ["Castelo"]    = Vector3.new(-5234, 21, 10446),
-    ["Hydra"]      = Vector3.new(-1143, 21, 12446),
-    ["Cake"]       = Vector3.new(-1143, 21, 15346),
-    ["Fountain"]   = Vector3.new(-1143, 21, 16846),
-    ["Raid"]       = Vector3.new(-1143, 21, 17846),
-}
-
-local function teleportTo(pos)
-    tweenTo(pos, 0.15)
+if not getgenv().BF_AntiAFKLoaded then
+    getgenv().BF_AntiAFKLoaded = true
+    task.spawn(function()
+        while task.wait(5) do
+            if not S.antiAFK then continue end
+            pcall(function()
+                -- Desabilita TODAS as conexões de Idled
+                for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
+                    conn:Disable()
+                end
+                -- Simula input pro Roblox achar que você tá ativo
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+        end
+    end)
 end
 
 -- ============================================================
--- AUTO FARM (NÍVEL + QUEST)
+-- QUEST
 -- ============================================================
-
-local function getQuestNPC()
-    local quests = Workspace:FindFirstChild("Quests") or Workspace:FindFirstChild("Quests")
+local function getCurrentQuestNPC()
+    local quests = Workspace:FindFirstChild("Quests")
     if not quests then return nil end
+
+    local level = LocalPlayer.Data and LocalPlayer.Data.Level.Value or 0
     for _, npc in pairs(quests:GetChildren()) do
         if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
             local lvl = npc:GetAttribute("Level") or 0
-            if LocalPlayer.Data.Level.Value >= lvl then
+            if level >= lvl and level < lvl + 15 then
                 return npc
             end
         end
@@ -141,123 +130,147 @@ local function getQuestNPC()
     return nil
 end
 
-local function autoFarmLevel()
-    if not S.autoFarm then return end
+local function autoQuest()
+    if not S.autoQuest then return end
+
+    local npc = getCurrentQuestNPC()
+    if not npc then return end
+
     local hrp = getHRP()
     if not hrp then return end
 
-    local questNPC = getQuestNPC()
-    if questNPC then
-        local questPos = questNPC.HumanoidRootPart.Position
-        tweenTo(questPos + Vector3.new(0, 5, 0), 0.2)
-        task.wait(0.5)
-    end
-
-    -- Procura inimigos próximos
-    local enemies = {}
-    for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v:IsA("Model") and v:FindFirstChild("HumanoidRootPart")
-           and v:FindFirstChildOfClass("Humanoid") then
-            local hum = v:FindFirstChildOfClass("Humanoid")
-            if hum.Health > 0 then
-                table.insert(enemies, v)
-            end
-        end
-    end
-
-    if #enemies > 0 then
-        table.sort(enemies, function(a, b)
-            local da = (a.HumanoidRootPart.Position - hrp.Position).Magnitude
-            local db = (b.HumanoidRootPart.Position - hrp.Position).Magnitude
-            return da < db
-        end)
-
-        local target = enemies[1]
-        local targetPos = target.HumanoidRootPart.Position
-        tweenTo(targetPos + Vector3.new(0, 5, 0), 0.1)
-
-        -- Ataca com a ferramenta equipada
-        local tool = getChar():FindFirstChildOfClass("Tool")
-        if tool then
-            tool:Activate()
-        end
-
-        -- Ataque com estilo de luta
-        local combat = game:GetService("ReplicatedStorage")
-            :FindFirstChild("Remotes")
-        if combat then
-            local attackRemote = combat:FindFirstChild("CommF_") 
-                or combat:FindFirstChild("Comm")
-            if attackRemote then
-                attackRemote:FireServer()
-            end
-        end
+    local pos = npc.HumanoidRootPart.Position
+    if (pos - hrp.Position).Magnitude > 10 then
+        tweenTo(pos + Vector3.new(0, 5, 0), 0.3)
     end
 end
 
 -- ============================================================
--- AUTO CHEST / FRUTA
+-- FARM
 -- ============================================================
+local function getNearestEnemy()
+    local hrp = getHRP()
+    if not hrp then return nil end
 
-local function autoCollectChest()
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+
+    local best, bestDist = nil, math.huge
+    for _, mob in pairs(enemies:GetChildren()) do
+        if mob:IsA("Model")
+           and mob:FindFirstChild("HumanoidRootPart")
+           and mob:FindFirstChildOfClass("Humanoid") then
+            local hum = mob:FindFirstChildOfClass("Humanoid")
+            if hum.Health > 0 then
+                local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
+                if d < bestDist then
+                    best, bestDist = mob, d
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function attackMob(mob)
+    local hrp = getHRP()
+    if not hrp or not mob then return end
+
+    local pos = mob.HumanoidRootPart.Position
+    -- Fica a uma distância segura e ataca
+    tweenTo(pos + Vector3.new(0, 5, 0), 0.12)
+
+    -- Equipa ferramenta e ativa
+    local tool = getChar():FindFirstChildOfClass("Tool")
+    if tool then
+        tool:Activate()
+    end
+
+    -- Ataque melee (o remoto padrão do jogo)
+    local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+    if remotes then
+        local comm = remotes:FindFirstChild("CommF_") or remotes:FindFirstChild("Comm")
+        if comm then
+            pcall(function() comm:FireServer() end)
+        end
+    end
+end
+
+local function autoFarmLevel()
+    if not S.autoFarm then return end
+
+    local questNPC = getCurrentQuestNPC()
+    if questNPC then
+        local hrp = getHRP()
+        if hrp and (questNPC.HumanoidRootPart.Position - hrp.Position).Magnitude > 15 then
+            tweenTo(questNPC.HumanoidRootPart.Position + Vector3.new(0, 5, 0), 0.4)
+            task.wait(0.6)
+        end
+    end
+
+    local mob = getNearestEnemy()
+    if mob then
+        attackMob(mob)
+    end
+end
+
+-- ============================================================
+-- CHEST
+-- ============================================================
+local function autoChest()
     if not S.autoChest then return end
     local hrp = getHRP()
     if not hrp then return end
 
-    for _, v in pairs(Workspace:GetDescendants()) do
-        if v.Name == "Chest" and v:IsA("MeshPart") then
-            local dist = (v.Position - hrp.Position).Magnitude
-            if dist < 500 then
-                tweenTo(v.Position + Vector3.new(0, 3, 0), 0.1)
-                task.wait(0.2)
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name == "Chest" and obj:IsA("MeshPart") then
+            local d = (obj.Position - hrp.Position).Magnitude
+            if d < 800 then
+                tweenTo(obj.Position + Vector3.new(0, 3, 0), 0.15)
+                task.wait(0.15)
             end
         end
     end
 end
 
-local function autoCollectFruit()
+-- ============================================================
+-- FRUIT
+-- ============================================================
+local function autoFruit()
     if not S.autoFruit then return end
     local hrp = getHRP()
     if not hrp then return end
 
-    for _, v in pairs(Workspace:GetDescendants()) do
-        if v:IsA("Tool") and v:FindFirstChild("Handle")
-           and v.Name:find("Fruit") then
-            local dist = (v.Handle.Position - hrp.Position).Magnitude
-            if dist < 500 then
-                tweenTo(v.Handle.Position, 0.1)
-                task.wait(0.2)
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("Tool") and obj:FindFirstChild("Handle")
+           and (obj.Name:find("Fruit") or obj.Name == "Fruit") then
+            local d = (obj.Handle.Position - hrp.Position).Magnitude
+            if d < 1000 then
+                tweenTo(obj.Handle.Position, 0.2)
+                task.wait(0.3)
             end
         end
     end
 end
 
 -- ============================================================
--- KILL AURA
+-- KILL AURA (conservador — só inimigo próximo)
 -- ============================================================
-
 local function killAura()
     if not S.killAura then return end
     local hrp = getHRP()
     if not hrp then return end
 
-    for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v:IsA("Model") and v:FindFirstChild("HumanoidRootPart")
-           and v:FindFirstChildOfClass("Humanoid") then
-            local hum = v:FindFirstChildOfClass("Humanoid")
-            if hum.Health > 0 then
-                local dist = (v.HumanoidRootPart.Position - hrp.Position).Magnitude
-                if dist < 30 then
-                    local combat = game:GetService("ReplicatedStorage")
-                        :FindFirstChild("Remotes")
-                    if combat then
-                        local attackRemote = combat:FindFirstChild("CommF_")
-                            or combat:FindFirstChild("Comm")
-                        if attackRemote then
-                            attackRemote:FireServer()
-                        end
-                    end
-                end
+    local mob = getNearestEnemy()
+    if not mob then return end
+
+    local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
+    if d < 35 then
+        local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        if remotes then
+            local comm = remotes:FindFirstChild("CommF_") or remotes:FindFirstChild("Comm")
+            if comm then
+                pcall(function() comm:FireServer() end)
             end
         end
     end
@@ -266,16 +279,15 @@ end
 -- ============================================================
 -- ESP
 -- ============================================================
-
 local espFolder = Instance.new("Folder")
-espFolder.Name = "BF_Hub_ESP"
+espFolder.Name = "BF_AFK_ESP"
 espFolder.Parent = Workspace
 
-local function createESP(part, text, color)
+local function makeESP(part, text, color)
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "ESP"
     billboard.Adornee = part
-    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.Size = UDim2.new(0, 200, 0, 40)
     billboard.StudsOffset = Vector3.new(0, 3, 0)
     billboard.AlwaysOnTop = true
     billboard.Parent = espFolder
@@ -287,137 +299,108 @@ local function createESP(part, text, color)
     label.TextColor3 = color
     label.TextStrokeTransparency = 0
     label.TextScaled = true
+    label.Font = Enum.Font.SourceSansBold
     label.Parent = billboard
 end
 
 local function updateESP()
     espFolder:ClearAllChildren()
 
-    if S.espPlayer then
-        for _, plr in pairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then
-                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    createESP(hrp, plr.Name, Color3.fromRGB(255, 50, 50))
-                end
-            end
-        end
-    end
-
     if S.espFruit then
-        for _, v in pairs(Workspace:GetDescendants()) do
-            if v:IsA("Tool") and v:FindFirstChild("Handle")
-               and v.Name:find("Fruit") then
-                createESP(v.Handle, v.Name, Color3.fromRGB(50, 255, 50))
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Tool") and obj:FindFirstChild("Handle")
+               and (obj.Name:find("Fruit") or obj.Name == "Fruit") then
+                makeESP(obj.Handle, obj.Name, Color3.fromRGB(50, 255, 50))
             end
         end
     end
 
     if S.espChest then
-        for _, v in pairs(Workspace:GetDescendants()) do
-            if v.Name == "Chest" and v:IsA("MeshPart") then
-                createESP(v, "Baú", Color3.fromRGB(255, 215, 0))
-            end
-        end
-    end
-
-    if S.espNPC then
-        for _, v in pairs(Workspace:GetChildren()) do
-            if v:IsA("Model") and v:FindFirstChild("Humanoid")
-               and v:FindFirstChild("HumanoidRootPart") then
-                createESP(v.HumanoidRootPart, v.Name, Color3.fromRGB(100, 200, 255))
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj.Name == "Chest" and obj:IsA("MeshPart") then
+                makeESP(obj, "Baú", Color3.fromRGB(255, 215, 0))
             end
         end
     end
 end
 
 -- ============================================================
--- ANTI-AFK
+-- TELEPORTE (tween, nunca instantâneo)
 -- ============================================================
-
-local vu = game:GetService("VirtualUser")
-Players.LocalPlayer.Idled:Connect(function()
-    if S.antiAFK then
-        vu:Button2Down(Vector2.new(0, 0), Camera.CFrame)
-        task.wait(1)
-        vu:Button2Up(Vector2.new(0, 0), Camera.CFrame)
-    end
-end)
+local ISLANDS = {
+    ["Ilha 1"]   = Vector3.new(1073, 18, 1401),
+    ["Ilha 2"]   = Vector3.new(3972, 12, 2919),
+    ["Ilha 3"]   = Vector3.new(-1002, 21, 5120),
+    ["Ilha 4"]   = Vector3.new(1006, 21, 2993),
+    ["Ilha 5"]   = Vector3.new(-3629, 20, 1783),
+    ["Ilha 6"]   = Vector3.new(-1131, 21, 6581),
+    ["Ilha 7"]   = Vector3.new(-5123, 21, 2953),
+    ["Ilha 8"]   = Vector3.new(3726, 21, -1527),
+    ["Ilha 9"]   = Vector3.new(-772, 21, -4201),
+    ["Ilha 10"]  = Vector3.new(-3674, 21, -2385),
+    ["Ilha 11"]  = Vector3.new(-1333, 21, -6632),
+    ["Ilha 12"]  = Vector3.new(4565, 21, -2933),
+    ["Ilha 13"]  = Vector3.new(3328, 21, 7402),
+    ["Ilha 14"]  = Vector3.new(4622, 21, 5589),
+    ["Ilha 15"]  = Vector3.new(1022, 21, 8894),
+    ["Ilha 16"]  = Vector3.new(-3748, 21, 8388),
+    ["Ilha 17"]  = Vector3.new(-2933, 21, 9138),
+    ["Ilha 18"]  = Vector3.new(2023, 21, 9999),
+    ["Ilha 19"]  = Vector3.new(-3823, 21, 12446),
+    ["Ilha 20"]  = Vector3.new(1823, 21, 12446),
+    ["Marine Ford"] = Vector3.new(-4243, 21, 14546),
+    ["Castelo"]  = Vector3.new(-5234, 21, 10446),
+    ["Hydra"]    = Vector3.new(-1143, 21, 12446),
+    ["Cake"]     = Vector3.new(-1143, 21, 15346),
+    ["Fountain"] = Vector3.new(-1143, 21, 16846),
+}
 
 -- ============================================================
--- LOOP PRINCIPAL
+-- LOOP
 -- ============================================================
-
 task.spawn(function()
     while task.wait(0.1) do
         pcall(function()
-            if S.autoFarm then autoFarmLevel() end
-            if S.autoChest then autoCollectChest() end
-            if S.autoFruit then autoCollectFruit() end
-            if S.killAura then killAura() end
-            if S.espPlayer or S.espFruit or S.espChest or S.espNPC then
-                updateESP()
-            end
+            if S.autoFarm  then autoFarmLevel() end
+            if S.autoQuest then autoQuest()     end
+            if S.autoChest then autoChest()     end
+            if S.autoFruit then autoFruit()     end
+            if S.killAura  then killAura()      end
+            if S.espFruit or S.espChest then updateESP() end
         end)
-    end
-end)
-
--- ============================================================
--- NOCLIP / SPEED / JUMP
--- ============================================================
-
-RunService.Stepped:Connect(function()
-    if S.noclip then
-        local char = getChar()
-        if char then
-            for _, part in pairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-        end
-    end
-
-    if S.speedHack then
-        local hum = getHum()
-        if hum then
-            hum.WalkSpeed = S.speedValue
-        end
-    end
-
-    if S.jumpPower then
-        local hum = getHum()
-        if hum then
-            hum.UseJumpPower = true
-            hum.JumpPower = S.jumpValue
-        end
     end
 end)
 
 -- ============================================================
 -- UI
 -- ============================================================
-
 local Window = Rayfield:CreateWindow({
-    Name = "Blox Fruits Hub",
+    Name = "BF AFK Farm",
     LoadingTitle = "Carregando...",
     LoadingSubtitle = "by Zyon",
     ConfigurationSaving = {
         Enabled = true,
-        FolderName = "BF_Hub",
+        FolderName = "BF_AFK",
         FileName = "Config"
     },
     KeySystem = false
 })
 
--- ----- ABA: FARM -----
+-- ----- FARM -----
 local FarmTab = Window:CreateTab("Farm", 4483362458)
 
 FarmTab:CreateToggle({
-    Name = "Auto Farm (Nível + Quest)",
+    Name = "Auto Farm AFK (Nível + Quest)",
     CurrentValue = false,
     Flag = "AutoFarm",
     Callback = function(v) S.autoFarm = v end
+})
+
+FarmTab:CreateToggle({
+    Name = "Auto Quest",
+    CurrentValue = false,
+    Flag = "AutoQuest",
+    Callback = function(v) S.autoQuest = v end
 })
 
 FarmTab:CreateToggle({
@@ -435,21 +418,24 @@ FarmTab:CreateToggle({
 })
 
 FarmTab:CreateToggle({
-    Name = "Kill Aura",
+    Name = "Kill Aura (conservador)",
     CurrentValue = false,
     Flag = "KillAura",
     Callback = function(v) S.killAura = v end
 })
 
--- ----- ABA: ESP -----
-local EspTab = Window:CreateTab("ESP", 4483362458)
-
-EspTab:CreateToggle({
-    Name = "ESP Jogadores",
-    CurrentValue = false,
-    Flag = "EspPlayer",
-    Callback = function(v) S.espPlayer = v end
+FarmTab:CreateSlider({
+    Name = "Velocidade do Tween",
+    Range = {0.05, 0.5},
+    Increment = 0.01,
+    Suffix = "s",
+    CurrentValue = 0.18,
+    Flag = "TweenSpeed",
+    Callback = function(v) S.tweenSpeed = v end
 })
+
+-- ----- ESP -----
+local EspTab = Window:CreateTab("ESP", 4483362458)
 
 EspTab:CreateToggle({
     Name = "ESP Frutas",
@@ -465,14 +451,7 @@ EspTab:CreateToggle({
     Callback = function(v) S.espChest = v end
 })
 
-EspTab:CreateToggle({
-    Name = "ESP NPCs",
-    CurrentValue = false,
-    Flag = "EspNPC",
-    Callback = function(v) S.espNPC = v end
-})
-
--- ----- ABA: TELEPORTE -----
+-- ----- TELEPORTE -----
 local TpTab = Window:CreateTab("Teleporte", 4483362458)
 
 local islandNames = {}
@@ -486,17 +465,15 @@ TpTab:CreateDropdown({
     Options = islandNames,
     CurrentOption = {"Ilha 1"},
     Flag = "IslandSelect",
-    Callback = function(option)
-        S.selectedIsland = option[1]
-    end
+    Callback = function(opt) S.selectedIsland = opt[1] end
 })
 
 TpTab:CreateButton({
-    Name = "Teleportar",
+    Name = "Teleportar (Tween)",
     Callback = function()
         local pos = ISLANDS[S.selectedIsland]
         if pos then
-            tweenTo(pos, 0.15)
+            tweenTo(pos, 0.4)
             Rayfield:Notify({
                 Title = "Teleporte",
                 Content = "Indo para " .. S.selectedIsland,
@@ -506,56 +483,31 @@ TpTab:CreateButton({
     end
 })
 
--- ----- ABA: MISC -----
+-- ----- MISC -----
 local MiscTab = Window:CreateTab("Misc", 4483362458)
 
 MiscTab:CreateToggle({
-    Name = "Anti-AFK",
+    Name = "Anti-AFK (recomendado)",
     CurrentValue = true,
     Flag = "AntiAFK",
     Callback = function(v) S.antiAFK = v end
 })
 
-MiscTab:CreateToggle({
-    Name = "NoClip",
-    CurrentValue = false,
-    Flag = "NoClip",
-    Callback = function(v) S.noclip = v end
-})
-
-MiscTab:CreateSlider({
-    Name = "Velocidade",
-    Range = {16, 300},
-    Increment = 1,
-    Suffix = "studs",
-    CurrentValue = 60,
-    Flag = "SpeedValue",
-    Callback = function(v)
-        S.speedValue = v
-        S.speedHack = true
-    end
-})
-
-MiscTab:CreateSlider({
-    Name = "Força do Pulo",
-    Range = {50, 500},
-    Increment = 1,
-    Suffix = "power",
-    CurrentValue = 80,
-    Flag = "JumpValue",
-    Callback = function(v)
-        S.jumpValue = v
-        S.jumpPower = true
+MiscTab:CreateButton({
+    Name = "Reset Character",
+    Callback = function()
+        local hum = getHum()
+        if hum then hum.Health = 0 end
     end
 })
 
 -- ============================================================
--- NOTIFICAÇÃO DE INÍCIO
+-- START
 -- ============================================================
 Rayfield:Notify({
-    Title = "Blox Fruits Hub",
-    Content = "Script carregado com sucesso.",
-    Duration = 3
+    Title = "BF AFK Farm",
+    Content = "Carregado. Deixa o Auto Farm ligado e vai AFK.",
+    Duration = 4
 })
 
-print("[BF_Hub] Carregado. Tecla de toggle: K")
+print("[BF AFK] Carregado.")

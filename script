@@ -1,1020 +1,333 @@
--- language: Lua, file: bf_nexus_autofarm_pro.lua
--- Nexus Auto Farm Pro | 3 Seas | Quest Priority | Anti-AFK | Rayfield UI
--- Foco: Auto Farm AFK | Sem teleporte | Movimento por tween | +2000 linhas
--- Base: Lógica de CFrameQ/CFrameMon e requestEntrance
+-- language: Lua, file: xyn_hub.lua, target: Roblox executor (Delta/Xeno)
+-- Xyn Hub — Auto Steal / Auto Hatch / ESP / Misc
+-- by Zyon99Error
+
 -- ============================================================
--- VERIFICAÇÃO DE JOGO
+-- CONFIGURAÇÃO — troque apenas o link quando criar no Linkvertise
 -- ============================================================
-local PLACE_IDS = {
-    [2753915549] = 1,  -- First Sea
-    [4442272183] = 2,  -- Second Sea
-    [7449423635] = 3,  -- Third Sea
+local CONFIG = {
+    hub_name   = "Xyn Hub",
+    author     = "Zyon99Error",
+    key_link   = "https://linkvertise.com/SEU_LINK_AQUI", -- <<< TROCA AQUI
+    discord    = "",
 }
-local CURRENT_SEA = PLACE_IDS[game.PlaceId]
-if not CURRENT_SEA then
-    return warn("[Nexus AF] Execute dentro do Blox Fruits.")
-end
 
 -- ============================================================
--- CARREGAMENTO DA UI (Rayfield)
+-- RAYFIELD — UI + KEY SYSTEM
 -- ============================================================
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+local Rayfield = loadstring(game:HttpGet(
+    'https://raw.githubusercontent.com/shlexsoftworks/Rayfield/main/source.lua'
+))()
+
+local Window = Rayfield:CreateWindow({
+    Name             = CONFIG.hub_name,
+    LoadingTitle     = "Carregando " .. CONFIG.hub_name,
+    LoadingSubtitle = "by " .. CONFIG.author,
+    ConfigurationSaving = {
+        Enabled    = true,
+        FolderName = "XynHub",
+        FileName   = "XynConfig",
+    },
+    Discord = { Enabled = false, Invite = CONFIG.discord, RememberJoins = false },
+    KeySystem = true,
+    KeySettings = {
+        Title   = CONFIG.hub_name .. " — Key System",
+        Subtitle = "Pegue sua key no Linkvertise",
+        Note    = "Leva 30 segundos. Depois salva automaticamente.",
+        FileName = "XynKey",
+        SaveKey  = true,
+        GrabKeyFromSite = true,
+        Key = { CONFIG.key_link },
+    },
+})
 
 -- ============================================================
--- SERVIÇOS
+-- ESTADO GLOBAL
 -- ============================================================
-local Players           = game:GetService("Players")
-local TweenService      = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualUser       = game:GetService("VirtualUser")
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
-local LocalPlayer       = Players.LocalPlayer
-local Camera            = workspace.CurrentCamera
-local CommF             = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
-
--- ============================================================
--- CONFIGURAÇÃO GLOBAL
--- ============================================================
-getgenv().NexusAF = {
-    -- Farm
-    Enabled         = false,
-    TweenSpeed      = 0.15,
-    AttackDelay     = 0.1,
-    AutoQuest       = true,
-    AutoChest       = false,
-    AutoFruit       = false,
-    AutoStoreFruit  = false,
-
-    -- Combate
-    KillAura        = false,
-    FastAttack      = false,
-    AutoSkill       = false,
-    SkillZ          = false,
-    SkillX          = false,
-    SkillC          = false,
-    SkillV          = false,
-
-    -- ESP
-    EspFruit        = false,
-    EspChest        = false,
-    EspPlayer       = false,
-    EspNPC          = false,
-
-    -- Misc
-    AntiAFK         = true,
-    Noclip          = false,
-    SelectedIsland  = nil,
-    SafeFarm        = true,
-    MaxDistance     = 5000,
-
-    -- Telemetria
-    Status          = "idle",
-    LastQuestID     = nil,
-    LastQuestTime   = 0,
-    KillCount       = 0,
-    SessionStart    = tick(),
-    CurrentTarget   = nil,
-    HasQuest        = false,
-    LastKillTime    = 0,
-    KillsPerMinute  = 0,
+_G.Xyn = {
+    auto_steal     = false,
+    auto_hatch     = false,
+    esp_enabled    = false,
+    speed          = 16,
+    jump           = 50,
+    steal_range    = 30,
+    steal_delay    = 0.3,
+    selected_remote = "",
+    esp_color      = Color3.fromRGB(0, 255, 200),
 }
-local N = getgenv().NexusAF
+
+local Players  = game:GetService("Players")
+local RunServ  = game:GetService("RunService")
+local RS       = game:GetService("ReplicatedStorage")
+local Local    = Players.LocalPlayer
+local EspCache = {}
 
 -- ============================================================
--- UTILITÁRIOS
+-- UTIL — encontrar remotes por nome parcial
 -- ============================================================
-local function getChar()
-    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local function find_remote(partial)
+    partial = partial:lower()
+    for _, obj in ipairs(RS:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
+            if obj.Name:lower():find(partial) then
+                return obj
+            end
+        end
+    end
+    return nil
 end
 
-local function getHRP()
-    local c = getChar()
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function getHum()
-    local c = getChar()
-    return c and c:FindFirstChildOfClass("Humanoid")
-end
-
-local function getTool()
-    local c = getChar()
-    return c and c:FindFirstChildOfClass("Tool")
-end
-
-local function getBackpack()
-    return LocalPlayer:FindFirstChild("Backpack")
-end
-
-local function getLevel()
-    return LocalPlayer.Data and LocalPlayer.Data.Level.Value or 1
-end
-
-local function formatTime(seconds)
-    local m = math.floor(seconds / 60)
-    local s = math.floor(seconds % 60)
-    return string.format("%02d:%02d", m, s)
-end
-
-local function calculateDistance(pos1, pos2)
-    return (pos1 - pos2).Magnitude
-end
-
-local function isAlive()
-    local hum = getHum()
-    return hum and hum.Health > 0
+local function dump_remotes()
+    print("========== XYN REMOTE DUMP ==========")
+    for _, obj in ipairs(RS:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            print(string.format("[%s] %s", obj.ClassName, obj:GetFullName()))
+        end
+    end
+    print("=====================================")
 end
 
 -- ============================================================
--- TWEEN MOVER (movimento suave — nunca teleporte)
+-- CORE — Auto Steal
 -- ============================================================
-local function tweenTo(position, duration)
-    local hrp = getHRP()
-    if not hrp then return false end
-
-    duration = duration or N.TweenSpeed
-    local dist = (position - hrp.Position).Magnitude
-    local scaled = math.clamp(duration * (dist / 50), 0.08, 1.5)
-
-    local info = TweenInfo.new(scaled, Enum.EasingStyle.Linear)
-    local goal = {CFrame = CFrame.new(position)}
-    local tween = TweenService:Create(hrp, info, goal)
-    tween:Play()
-    tween.Completed:Wait()
-    return true
+local function get_closest_target(max_dist)
+    local root = Local.Character and Local.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil, math.huge end
+    local closest, closest_dist = nil, max_dist or math.huge
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Anchored then
+            local name = obj.Name:lower()
+            if name:find("egg") or name:find("brainrot") or name:find("pet") then
+                local d = (obj.Position - root.Position).Magnitude
+                if d < closest_dist then
+                    closest, closest_dist = obj, d
+                end
+            end
+        end
+    end
+    return closest, closest_dist
 end
 
--- ============================================================
--- REQUEST ENTRANCE (para distâncias longas)
--- ============================================================
-local function requestEntrance(position)
+local function fire_steal(remote, target)
+    if not remote then return end
+    local root = Local.Character and Local.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
     pcall(function()
-        CommF:InvokeServer("requestEntrance", position)
+        remote:FireServer(target)
     end)
-end
-
--- ============================================================
--- BANCO DE QUESTS — FIRST SEA
--- CFrameQ = posição do NPC | CFrameMon = posição do mob
--- ============================================================
-local QUEST_DB = {
-    [1] = {
-        {minLv=1,   maxLv=9,   quest="BanditQuest1", levelQuest=1,
-         target="Bandit",
-         CFrameQ=CFrame.new(1060.93, 16.45, 1547.78),
-         CFrameMon=CFrame.new(1038.55, 41.29, 1576.50)},
-        {minLv=10,  maxLv=14,  quest="JungleQuest", levelQuest=1,
-         target="Monkey",
-         CFrameQ=CFrame.new(-1601.65, 36.85, 153.38),
-         CFrameMon=CFrame.new(-1448.14, 50.85, 63.60)},
-        {minLv=15,  maxLv=29,  quest="JungleQuest", levelQuest=2,
-         target="Gorilla",
-         CFrameQ=CFrame.new(-1601.65, 36.85, 153.38),
-         CFrameMon=CFrame.new(-1142.64, 40.46, -515.39)},
-        {minLv=30,  maxLv=39,  quest="BuggyQuest1", levelQuest=1,
-         target="Pirate",
-         CFrameQ=CFrame.new(-1140.17, 4.75, 3827.40),
-         CFrameMon=CFrame.new(-1201.08, 40.62, 3857.59)},
-        {minLv=40,  maxLv=59,  quest="BuggyQuest2", levelQuest=2,
-         target="Brute",
-         CFrameQ=CFrame.new(-1140.17, 4.75, 3827.40),
-         CFrameMon=CFrame.new(-1387.53, 24.59, 4100.95)},
-        {minLv=60,  maxLv=74,  quest="DesertQuest", levelQuest=1,
-         target="Desert Bandit",
-         CFrameQ=CFrame.new(896.51, 6.43, 4390.14),
-         CFrameMon=CFrame.new(984.99, 16.10, 4417.91)},
-        {minLv=75,  maxLv=89,  quest="DesertQuest", levelQuest=2,
-         target="Desert Officer",
-         CFrameQ=CFrame.new(896.51, 6.43, 4390.14),
-         CFrameMon=CFrame.new(1547.15, 14.45, 4381.80)},
-        {minLv=90,  maxLv=99,  quest="SnowQuest", levelQuest=1,
-         target="Snow Bandit",
-         CFrameQ=CFrame.new(1386.80, 87.27, -1298.35),
-         CFrameMon=CFrame.new(1356.30, 105.76, -1328.24)},
-        {minLv=100, maxLv=119, quest="SnowQuest", levelQuest=2,
-         target="Snowman",
-         CFrameQ=CFrame.new(1386.80, 87.27, -1298.35),
-         CFrameMon=CFrame.new(1218.79, 138.01, -1488.02)},
-        {minLv=120, maxLv=149, quest="MarineQuest2", levelQuest=1,
-         target="Chief Petty Officer",
-         CFrameQ=CFrame.new(-5035.49, 28.67, 4324.18),
-         CFrameMon=CFrame.new(-4931.15, 65.79, 4121.83)},
-        {minLv=150, maxLv=174, quest="SkyQuest", levelQuest=1,
-         target="Sky Bandit",
-         CFrameQ=CFrame.new(-4842.13, 717.69, -2623.04),
-         CFrameMon=CFrame.new(-4955.64, 365.46, -2908.18)},
-        {minLv=175, maxLv=189, quest="SkyQuest", levelQuest=2,
-         target="Dark Master",
-         CFrameQ=CFrame.new(-4842.13, 717.69, -2623.04),
-         CFrameMon=CFrame.new(-5148.16, 439.04, -2332.96)},
-        {minLv=190, maxLv=209, quest="PrisonerQuest", levelQuest=1,
-         target="Prisoner",
-         CFrameQ=CFrame.new(5310.60, 0.35, 474.94),
-         CFrameMon=CFrame.new(4937.31, 0.33, 649.57)},
-        {minLv=210, maxLv=249, quest="PrisonerQuest", levelQuest=2,
-         target="Dangerous Prisoner",
-         CFrameQ=CFrame.new(5310.60, 0.35, 474.94),
-         CFrameMon=CFrame.new(5099.66, 0.35, 1055.75)},
-        {minLv=250, maxLv=274, quest="ColosseumQuest", levelQuest=1,
-         target="Toga Warrior",
-         CFrameQ=CFrame.new(-1577.78, 7.41, -2984.48),
-         CFrameMon=CFrame.new(-1872.51, 49.08, -2913.81)},
-        {minLv=275, maxLv=299, quest="ColosseumQuest", levelQuest=2,
-         target="Gladiator",
-         CFrameQ=CFrame.new(-1577.78, 7.41, -2984.48),
-         CFrameMon=CFrame.new(-1521.37, 81.20, -3066.31)},
-        {minLv=300, maxLv=324, quest="MagmaQuest", levelQuest=1,
-         target="Military Soldier",
-         CFrameQ=CFrame.new(-5316.11, 12.26, 8517.00),
-         CFrameMon=CFrame.new(-5405.00, 12.00, 8600.00)},
-        {minLv=325, maxLv=374, quest="MagmaQuest", levelQuest=2,
-         target="Military Spy",
-         CFrameQ=CFrame.new(-5316.11, 12.26, 8517.00),
-         CFrameMon=CFrame.new(-5787.00, 75.82, 8651.69)},
-        {minLv=375, maxLv=399, quest="FishmanQuest", levelQuest=1,
-         target="Fishman Warrior",
-         CFrameQ=CFrame.new(61122.65, 18.49, 1569.39),
-         CFrameMon=CFrame.new(60844.10, 98.46, 1298.39)},
-        {minLv=400, maxLv=449, quest="FishmanQuest", levelQuest=2,
-         target="Fishman Commando",
-         CFrameQ=CFrame.new(61122.65, 18.49, 1569.39),
-         CFrameMon=CFrame.new(61738.39, 64.20, 1433.83)},
-        {minLv=450, maxLv=474, quest="SkyExp1Quest", levelQuest=1,
-         target="God's Guard",
-         CFrameQ=CFrame.new(-4721.86, 845.30, -1953.84),
-         CFrameMon=CFrame.new(-4628.04, 866.92, -1931.23)},
-        {minLv=475, maxLv=524, quest="SkyExp1Quest", levelQuest=2,
-         target="Shanda",
-         CFrameQ=CFrame.new(-7863.15, 5545.51, -378.42),
-         CFrameMon=CFrame.new(-7685.14, 5601.07, -441.38)},
-        {minLv=525, maxLv=549, quest="SkyExp2Quest", levelQuest=1,
-         target="Royal Squad",
-         CFrameQ=CFrame.new(-7903.38, 5635.98, -1410.92),
-         CFrameMon=CFrame.new(-7654.25, 5637.10, -1407.75)},
-        {minLv=550, maxLv=624, quest="SkyExp2Quest", levelQuest=2,
-         target="Royal Soldier",
-         CFrameQ=CFrame.new(-7903.38, 5635.98, -1410.92),
-         CFrameMon=CFrame.new(-7760.41, 5679.90, -1884.81)},
-        {minLv=625, maxLv=649, quest="FountainQuest", levelQuest=1,
-         target="Galley Pirate",
-         CFrameQ=CFrame.new(5258.27, 38.52, 4050.04),
-         CFrameMon=CFrame.new(5557.16, 152.32, 3998.77)},
-        {minLv=650, maxLv=699, quest="FountainQuest", levelQuest=2,
-         target="Galley Captain",
-         CFrameQ=CFrame.new(5258.27, 38.52, 4050.04),
-         CFrameMon=CFrame.new(5677.67, 92.78, 4966.63)},
-    },
-    [2] = {
-        {minLv=700,  maxLv=724,  quest="Area1Quest", levelQuest=1,
-         target="Raider",
-         CFrameQ=CFrame.new(-427.72, 72.99, 1835.94),
-         CFrameMon=CFrame.new(68.87, 93.63, 2429.67)},
-        {minLv=725,  maxLv=774,  quest="Area1Quest", levelQuest=2,
-         target="Mercenary",
-         CFrameQ=CFrame.new(-427.72, 72.99, 1835.94),
-         CFrameMon=CFrame.new(-864.85, 122.47, 1453.15)},
-        {minLv=775,  maxLv=799,  quest="Area2Quest", levelQuest=1,
-         target="Swan Pirate",
-         CFrameQ=CFrame.new(635.61, 73.09, 917.81),
-         CFrameMon=CFrame.new(1065.36, 137.64, 1324.37)},
-        {minLv=800,  maxLv=874,  quest="Area2Quest", levelQuest=2,
-         target="Factory Staff",
-         CFrameQ=CFrame.new(635.61, 73.09, 917.81),
-         CFrameMon=CFrame.new(533.22, 128.46, 355.62)},
-        {minLv=875,  maxLv=899,  quest="MarineQuest3", levelQuest=1,
-         target="Marine Lieutenant",
-         CFrameQ=CFrame.new(-2440.99, 73.04, -3217.70),
-         CFrameMon=CFrame.new(-2489.26, 84.61, -3151.88)},
-        {minLv=900,  maxLv=949,  quest="MarineQuest3", levelQuest=2,
-         target="Marine Captain",
-         CFrameQ=CFrame.new(-2440.99, 73.04, -3217.70),
-         CFrameMon=CFrame.new(-2335.20, 79.78, -3245.86)},
-        {minLv=950,  maxLv=974,  quest="ZombieQuest", levelQuest=1,
-         target="Zombie",
-         CFrameQ=CFrame.new(-5494.34, 48.50, -794.59),
-         CFrameMon=CFrame.new(-5536.49, 101.08, -835.59)},
-        {minLv=975,  maxLv=999,  quest="ZombieQuest", levelQuest=2,
-         target="Vampire",
-         CFrameQ=CFrame.new(-5494.34, 48.50, -794.59),
-         CFrameMon=CFrame.new(-5806.10, 16.72, -1164.43)},
-        {minLv=1000, maxLv=1049, quest="SnowMountainQuest", levelQuest=1,
-         target="Snow Trooper",
-         CFrameQ=CFrame.new(607.05, 401.44, -5370.55),
-         CFrameMon=CFrame.new(535.21, 432.74, -5484.91)},
-        {minLv=1050, maxLv=1099, quest="SnowMountainQuest", levelQuest=2,
-         target="Winter Warrior",
-         CFrameQ=CFrame.new(607.05, 401.44, -5370.55),
-         CFrameMon=CFrame.new(1234.44, 456.95, -5174.13)},
-        {minLv=1100, maxLv=1124, quest="IceSideQuest", levelQuest=1,
-         target="Lab Subordinate",
-         CFrameQ=CFrame.new(-6061.84, 15.92, -4902.03),
-         CFrameMon=CFrame.new(-5720.55, 63.30, -4784.61)},
-        {minLv=1125, maxLv=1174, quest="IceSideQuest", levelQuest=2,
-         target="Horned Warrior",
-         CFrameQ=CFrame.new(-6061.84, 15.92, -4902.03),
-         CFrameMon=CFrame.new(-6292.75, 91.18, -5502.64)},
-        {minLv=1175, maxLv=1199, quest="FireSideQuest", levelQuest=1,
-         target="Magma Ninja",
-         CFrameQ=CFrame.new(-5429.04, 15.97, -5297.96),
-         CFrameMon=CFrame.new(-5461.83, 30.00, -5400.00)},
-        {minLv=1200, maxLv=1299, quest="FireSideQuest", levelQuest=2,
-         target="Lava Pirate",
-         CFrameQ=CFrame.new(-5429.04, 15.97, -5297.96),
-         CFrameMon=CFrame.new(-5600.00, 40.00, -5450.00)},
-        {minLv=1300, maxLv=1349, quest="FrostQuest", levelQuest=1,
-         target="Arctic Warrior",
-         CFrameQ=CFrame.new(5668.13, 28.20, -6484.60),
-         CFrameMon=CFrame.new(5935.45, 77.26, -6472.75)},
-        {minLv=1350, maxLv=1374, quest="FrostQuest", levelQuest=1,
-         target="Arctic Warrior",
-         CFrameQ=CFrame.new(5668.13, 28.20, -6484.60),
-         CFrameMon=CFrame.new(5935.45, 77.26, -6472.75)},
-        {minLv=1375, maxLv=1424, quest="FrostQuest", levelQuest=2,
-         target="Snow Lurker",
-         CFrameQ=CFrame.new(5668.13, 28.20, -6484.60),
-         CFrameMon=CFrame.new(5628.48, 57.57, -6618.34)},
-        {minLv=1425, maxLv=1449, quest="ForgottenQuest", levelQuest=1,
-         target="Sea Soldier",
-         CFrameQ=CFrame.new(-3054.58, 236.87, -10147.79),
-         CFrameMon=CFrame.new(-3185.01, 58.78, -9663.60)},
-        {minLv=1450, maxLv=1499, quest="ForgottenQuest", levelQuest=2,
-         target="Water Fighter",
-         CFrameQ=CFrame.new(-3054.58, 236.87, -10147.79),
-         CFrameMon=CFrame.new(-3262.93, 298.69, -10552.52)},
-    },
-    [3] = {
-        {minLv=1500, maxLv=1524, quest="PiratePortQuest", levelQuest=1,
-         target="Pirate Millionaire",
-         CFrameQ=CFrame.new(-289.61, 43.81, 5580.09),
-         CFrameMon=CFrame.new(-435.68, 189.69, 5551.07)},
-        {minLv=1525, maxLv=1574, quest="PiratePortQuest", levelQuest=2,
-         target="Pistol Billionaire",
-         CFrameQ=CFrame.new(-289.61, 43.81, 5580.09),
-         CFrameMon=CFrame.new(-350.00, 200.00, 5600.00)},
-        {minLv=1575, maxLv=1599, quest="DragonQuest", levelQuest=1,
-         target="Dragon Crew Warrior",
-         CFrameQ=CFrame.new(-5500.00, 100.00, -3000.00),
-         CFrameMon=CFrame.new(-5600.00, 120.00, -3100.00)},
-        {minLv=1600, maxLv=1624, quest="DragonQuest", levelQuest=2,
-         target="Dragon Crew Archer",
-         CFrameQ=CFrame.new(-5500.00, 100.00, -3000.00),
-         CFrameMon=CFrame.new(-5700.00, 130.00, -3200.00)},
-        {minLv=1625, maxLv=1649, quest="HumanQuest", levelQuest=1,
-         target="Female Islander",
-         CFrameQ=CFrame.new(2000.00, 100.00, 8000.00),
-         CFrameMon=CFrame.new(2100.00, 120.00, 8100.00)},
-        {minLv=1650, maxLv=1699, quest="HumanQuest", levelQuest=2,
-         target="Giant Islander",
-         CFrameQ=CFrame.new(2000.00, 100.00, 8000.00),
-         CFrameMon=CFrame.new(2200.00, 140.00, 8200.00)},
-        {minLv=1700, maxLv=1724, quest="MarineTreeQuest", levelQuest=1,
-         target="Marine Commodore",
-         CFrameQ=CFrame.new(-5000.00, 50.00, 10000.00),
-         CFrameMon=CFrame.new(-5100.00, 70.00, 10100.00)},
-        {minLv=1725, maxLv=1774, quest="MarineTreeQuest", levelQuest=2,
-         target="Marine Rear Admiral",
-         CFrameQ=CFrame.new(-5000.00, 50.00, 10000.00),
-         CFrameMon=CFrame.new(-5200.00, 90.00, 10200.00)},
-        {minLv=1775, maxLv=1799, quest="TurtleQuest", levelQuest=1,
-         target="Fishman Raider",
-         CFrameQ=CFrame.new(-1000.00, 50.00, 12000.00),
-         CFrameMon=CFrame.new(-1100.00, 70.00, 12100.00)},
-        {minLv=1800, maxLv=1849, quest="TurtleQuest", levelQuest=2,
-         target="Fishman Captain",
-         CFrameQ=CFrame.new(-1000.00, 50.00, 12000.00),
-         CFrameMon=CFrame.new(-1200.00, 90.00, 12200.00)},
-        {minLv=1850, maxLv=1874, quest="ForestQuest", levelQuest=1,
-         target="Forest Pirate",
-         CFrameQ=CFrame.new(3000.00, 50.00, 15000.00),
-         CFrameMon=CFrame.new(3100.00, 70.00, 15100.00)},
-        {minLv=1875, maxLv=1899, quest="ForestQuest", levelQuest=2,
-         target="Mythological Pirate",
-         CFrameQ=CFrame.new(3000.00, 50.00, 15000.00),
-         CFrameMon=CFrame.new(3200.00, 90.00, 15200.00)},
-        {minLv=1900, maxLv=1924, quest="HauntedQuest1", levelQuest=1,
-         target="Jungle Pirate",
-         CFrameQ=CFrame.new(-9500.00, 140.00, 5500.00),
-         CFrameMon=CFrame.new(-9600.00, 160.00, 5600.00)},
-        {minLv=1925, maxLv=1974, quest="HauntedQuest1", levelQuest=2,
-         target="Living Zombie",
-         CFrameQ=CFrame.new(-9500.00, 140.00, 5500.00),
-         CFrameMon=CFrame.new(-10103.75, 238.57, 6179.76)},
-        {minLv=1975, maxLv=1999, quest="HauntedQuest2", levelQuest=1,
-         target="Demonic Soul",
-         CFrameQ=CFrame.new(-9516.99, 178.01, 6078.47),
-         CFrameMon=CFrame.new(-9712.03, 204.70, 6193.32)},
-        {minLv=2000, maxLv=2024, quest="HauntedQuest2", levelQuest=2,
-         target="Posessed Mummy",
-         CFrameQ=CFrame.new(-9516.99, 178.01, 6078.47),
-         CFrameMon=CFrame.new(-9545.78, 69.62, 6339.56)},
-        {minLv=2025, maxLv=2049, quest="NutsIslandQuest", levelQuest=1,
-         target="Peanut Scout",
-         CFrameQ=CFrame.new(-2105.53, 37.25, -10195.51),
-         CFrameMon=CFrame.new(-2150.59, 122.50, -10358.99)},
-        {minLv=2050, maxLv=2074, quest="NutsIslandQuest", levelQuest=2,
-         target="Peanut President",
-         CFrameQ=CFrame.new(-2105.53, 37.25, -10195.51),
-         CFrameMon=CFrame.new(-2200.00, 150.00, -10500.00)},
-        {minLv=2075, maxLv=2099, quest="IceCreamQuest", levelQuest=1,
-         target="Ice Cream Chef",
-         CFrameQ=CFrame.new(-1000.00, 100.00, -12000.00),
-         CFrameMon=CFrame.new(-1100.00, 120.00, -12100.00)},
-        {minLv=2100, maxLv=2124, quest="IceCreamQuest", levelQuest=2,
-         target="Ice Cream Chef",
-         CFrameQ=CFrame.new(-1000.00, 100.00, -12000.00),
-         CFrameMon=CFrame.new(-1200.00, 140.00, -12200.00)},
-        {minLv=2125, maxLv=2149, quest="CakeQuest1", levelQuest=1,
-         target="Cake Guard",
-         CFrameQ=CFrame.new(-2022.30, 36.93, -12030.98),
-         CFrameMon=CFrame.new(-1418.11, 36.67, -12255.73)},
-        {minLv=2150, maxLv=2174, quest="CakeQuest1", levelQuest=2,
-         target="Cake Guard",
-         CFrameQ=CFrame.new(-2022.30, 36.93, -12030.98),
-         CFrameMon=CFrame.new(-1418.11, 36.67, -12255.73)},
-        {minLv=2175, maxLv=2199, quest="CakeQuest2", levelQuest=1,
-         target="Baking Staff",
-         CFrameQ=CFrame.new(-1928.32, 37.73, -12840.63),
-         CFrameMon=CFrame.new(-1980.44, 36.67, -12983.84)},
-        {minLv=2200, maxLv=2224, quest="CakeQuest2", levelQuest=2,
-         target="Head Baker",
-         CFrameQ=CFrame.new(-1928.32, 37.73, -12840.63),
-         CFrameMon=CFrame.new(-2251.58, 52.27, -13033.40)},
-        {minLv=2225, maxLv=2249, quest="ChocQuest1", levelQuest=1,
-         target="Cocoa Warrior",
-         CFrameQ=CFrame.new(231.75, 23.90, -12200.29),
-         CFrameMon=CFrame.new(167.98, 26.23, -12238.87)},
-        {minLv=2250, maxLv=2274, quest="ChocQuest1", levelQuest=2,
-         target="Chocolate Bar Battler",
-         CFrameQ=CFrame.new(231.75, 23.90, -12200.29),
-         CFrameMon=CFrame.new(200.00, 30.00, -12300.00)},
-        {minLv=2275, maxLv=2299, quest="ChocQuest2", levelQuest=1,
-         target="Sweet Thief",
-         CFrameQ=CFrame.new(150.00, 25.00, -12400.00),
-         CFrameMon=CFrame.new(100.00, 30.00, -12500.00)},
-        {minLv=2300, maxLv=2324, quest="ChocQuest2", levelQuest=2,
-         target="Candy Rebel",
-         CFrameQ=CFrame.new(150.00, 25.00, -12400.00),
-         CFrameMon=CFrame.new(50.00, 35.00, -12600.00)},
-        {minLv=2325, maxLv=2349, quest="CandyQuest", levelQuest=1,
-         target="Candy Pirate",
-         CFrameQ=CFrame.new(-1000.00, 20.00, -13000.00),
-         CFrameMon=CFrame.new(-1100.00, 25.00, -13100.00)},
-        {minLv=2350, maxLv=2374, quest="CandyQuest", levelQuest=2,
-         target="Sweet Thief",
-         CFrameQ=CFrame.new(-1000.00, 20.00, -13000.00),
-         CFrameMon=CFrame.new(-1200.00, 30.00, -13200.00)},
-    },
-}
-
--- ============================================================
--- ILHAS POR MAR (para teleporte)
--- ============================================================
-local ISLANDS = {
-    [1] = {
-        ["Starter"]         = Vector3.new(1073, 18, 1401),
-        ["Jungle"]          = Vector3.new(-1601, 36, 153),
-        ["Pirate Village"]  = Vector3.new(-1140, 4, 4390),
-        ["Desert"]          = Vector3.new(896, 6, 4390),
-        ["Frozen Village"]  = Vector3.new(-1002, 21, 5120),
-        ["Marine Fortress"] = Vector3.new(-3629, 20, 1783),
-        ["Skylands"]        = Vector3.new(-1006, 21, 2993),
-        ["Prison"]          = Vector3.new(4565, 21, -2933),
-        ["Colosseum"]       = Vector3.new(-772, 21, -4201),
-        ["Magma Village"]   = Vector3.new(-3674, 21, -2385),
-        ["Underwater City"] = Vector3.new(-1333, 21, -6632),
-        ["Upper Skylands"]  = Vector3.new(3328, 21, 7402),
-        ["Fountain City"]   = Vector3.new(4622, 21, 5589),
-    },
-    [2] = {
-        ["Kingdom of Rose"] = Vector3.new(1022, 21, 8894),
-        ["Green Zone"]      = Vector3.new(-3748, 21, 8388),
-        ["Graveyard"]       = Vector3.new(-2933, 21, 9138),
-        ["Dark Arena"]      = Vector3.new(2023, 21, 9999),
-        ["Remote Island"]   = Vector3.new(-3823, 21, 12446),
-        ["Cursed Ship"]     = Vector3.new(1823, 21, 12446),
-        ["Ice Castle"]      = Vector3.new(-4243, 21, 14546),
-        ["Forgotten Island"] = Vector3.new(-5234, 21, 10446),
-    },
-    [3] = {
-        ["Port Town"]       = Vector3.new(-1143, 21, 12446),
-        ["Hydra Island"]    = Vector3.new(-1143, 21, 15346),
-        ["Great Tree"]      = Vector3.new(-1143, 21, 16846),
-        ["Floating Turtle"] = Vector3.new(-1143, 21, 17846),
-        ["Castle on the Sea"] = Vector3.new(-5234, 21, 10446),
-        ["Sea of Treats"]   = Vector3.new(-1333, 21, -6632),
-    },
-}
-
--- ============================================================
--- QUEST LOGIC
--- ============================================================
-local function getQuestEntry()
-    local level = getLevel()
-    local seaDB = QUEST_DB[CURRENT_SEA]
-    if not seaDB then return nil end
-
-    for _, entry in ipairs(seaDB) do
-        if level >= entry.minLv and level <= entry.maxLv then
-            return entry
-        end
-    end
-    local fallback = nil
-    for _, entry in ipairs(seaDB) do
-        if level >= entry.minLv then fallback = entry end
-    end
-    return fallback
-end
-
-local function hasActiveQuest()
-    local gui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not gui then return false end
-    local main = gui:FindFirstChild("Main")
-    if not main then return false end
-    local quest = main:FindFirstChild("Quest")
-    if quest and quest.Visible then
-        return true
-    end
-    return false
-end
-
-local function acceptQuest(entry)
-    if not entry then return false end
-    local ok = pcall(function()
-        CommF:InvokeServer("StartQuest", entry.quest, entry.levelQuest)
-    end)
-    if ok then
-        N.LastQuestID = entry.quest
-        N.LastQuestTime = tick()
-    end
-    return ok
-end
-
-local function abandonQuest()
     pcall(function()
-        CommF:InvokeServer("AbandonQuest")
+        remote:FireServer()
     end)
 end
 
+spawn(function()
+    while task.wait(_G.Xyn.steal_delay) do
+        if _G.Xyn.auto_steal then
+            local remote = _G.Xyn.selected_remote ~= "" and find_remote(_G.Xyn.selected_remote)
+                            or find_remote("steal")
+                            or find_remote("grab")
+            local target = get_closest_target(_G.Xyn.steal_range)
+            if remote then
+                fire_steal(remote, target)
+            end
+        end
+    end
+end)
+
 -- ============================================================
--- ATTACK (sem interagir com inventário)
+-- CORE — Auto Hatch
 -- ============================================================
-local function attack()
-    local tool = getTool()
-    if tool then
-        pcall(function() tool:Activate() end)
+spawn(function()
+    while task.wait(1) do
+        if _G.Xyn.auto_hatch then
+            local hatch = find_remote("hatch") or find_remote("open") or find_remote("egg")
+            if hatch then
+                pcall(function() hatch:FireServer() end)
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- ESP — Highlight em ovos/brainrots/pets
+-- ============================================================
+local function clear_esp()
+    for obj, hl in pairs(EspCache) do
+        if hl and hl.Parent then hl:Destroy() end
+        EspCache[obj] = nil
     end
 end
 
--- ============================================================
--- FARM LOOP (com prioridade de missão)
--- ============================================================
-local function farmStep()
-    local entry = getQuestEntry()
-    if not entry then
-        N.Status = "sem quest para o nível"
-        return
-    end
+local function apply_esp(obj)
+    if EspCache[obj] and EspCache[obj].Parent then return end
+    local hl = Instance.new("Highlight")
+    hl.FillColor         = _G.Xyn.esp_color
+    hl.OutlineColor      = Color3.fromRGB(255, 255, 255)
+    hl.FillTransparency  = 0.6
+    hl.OutlineTransparency = 0
+    hl.DepthMode         = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent            = obj
+    EspCache[obj] = hl
+end
 
-    local hrp = getHRP()
-    if not hrp then return end
-
-    -- ========================================================
-    -- PASSO 1: VERIFICAR SE HÁ QUEST ATIVA
-    -- ========================================================
-    local hasQuest = hasActiveQuest()
-    N.HasQuest = hasQuest
-
-    if not hasQuest then
-        -- Sem missão: ir ao NPC e aceitar
-        N.Status = "indo pro NPC: " .. entry.quest
-
-        -- Se a distância for muito grande, usar requestEntrance
-        local distToNPC = (entry.CFrameQ.Position - hrp.Position).Magnitude
-        if distToNPC > 3000 then
-            requestEntrance(entry.CFrameQ.Position)
-            task.wait(0.5)
-        else
-            tweenTo(entry.CFrameQ.Position + Vector3.new(0, 5, 0), 0.4)
-            task.wait(0.2)
-        end
-
-        -- Verifica se chegou perto o suficiente para aceitar
-        local newDist = (entry.CFrameQ.Position - hrp.Position).Magnitude
-        if newDist <= 15 then
-            N.Status = "aceitando quest: " .. entry.quest
-            acceptQuest(entry)
-            task.wait(0.8)
-        end
-        return
-    end
-
-    -- ========================================================
-    -- PASSO 2: QUEST ATIVA -> IR PARA O MOB E ATACAR
-    -- ========================================================
-    N.Status = "indo para o mob: " .. entry.target
-
-    -- Se a distância for muito grande, usar requestEntrance
-    local distToMob = (entry.CFrameMon.Position - hrp.Position).Magnitude
-    if distToMob > 3000 then
-        requestEntrance(entry.CFrameMon.Position)
-        task.wait(0.5)
-    else
-        tweenTo(entry.CFrameMon.Position + Vector3.new(0, 5, 0), 0.12)
-    end
-
-    -- Ataca o mob mais próximo do tipo correto
-    local enemies = workspace:FindFirstChild("Enemies")
-    if enemies then
-        local best, bestDist = nil, math.huge
-        for _, mob in pairs(enemies:GetChildren()) do
-            if mob:IsA("Model") and mob.Name:find(entry.target)
-               and mob:FindFirstChild("HumanoidRootPart")
-               and mob:FindFirstChildOfClass("Humanoid") then
-                local hum = mob:FindFirstChildOfClass("Humanoid")
-                if hum.Health > 0 then
-                    local d = (mob.HumanoidRootPart.Position - hrp.Position).Magnitude
-                    if d < bestDist then
-                        best, bestDist = mob, d
+spawn(function()
+    while task.wait(0.5) do
+        if _G.Xyn.esp_enabled then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") or obj:IsA("BasePart") then
+                    local n = obj.Name:lower()
+                    if n:find("egg") or n:find("brainrot") or n:find("pet") then
+                        apply_esp(obj)
                     end
                 end
             end
-        end
-
-        if best then
-            N.Status = "atacando: " .. entry.target .. " (" .. math.floor(bestDist) .. " studs)"
-            N.CurrentTarget = entry.target
-            tweenTo(best.HumanoidRootPart.Position + Vector3.new(0, 5, 0), 0.1)
-            attack()
-            task.wait(N.AttackDelay)
-
-            -- Kill count
-            local hum = best:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health <= 0 then
-                N.KillCount = N.KillCount + 1
-                N.LastKillTime = tick()
-            end
         else
-            N.Status = "procurando: " .. entry.target
-            task.wait(0.2)
-        end
-    end
-end
-
--- ============================================================
--- ESP (BillboardGui)
--- ============================================================
-local espFolder = Instance.new("Folder")
-espFolder.Name = "Nexus_ESP"
-espFolder.Parent = workspace
-
-local function makeESP(part, text, color)
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "ESP"
-    billboard.Adornee = part
-    billboard.Size = UDim2.new(0, 200, 0, 40)
-    billboard.StudsOffset = Vector3.new(0, 3, 0)
-    billboard.AlwaysOnTop = true
-    billboard.Parent = espFolder
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = color
-    label.TextStrokeTransparency = 0
-    label.TextScaled = true
-    label.Font = Enum.Font.SourceSansBold
-    label.Parent = billboard
-end
-
-local function updateESP()
-    espFolder:ClearAllChildren()
-
-    if N.EspFruit then
-        for _, obj in pairs(workspace:GetDescendants()) do
-            if obj:IsA("Tool") and obj:FindFirstChild("Handle")
-               and (obj.Name:find("Fruit") or obj.Name == "Fruit") then
-                makeESP(obj.Handle, obj.Name, Color3.fromRGB(50, 255, 50))
-            end
-        end
-    end
-
-    if N.EspChest then
-        for _, obj in pairs(workspace:GetDescendants()) do
-            if obj.Name == "Chest" and obj:IsA("MeshPart") then
-                makeESP(obj, "Bau", Color3.fromRGB(255, 215, 0))
-            end
-        end
-    end
-
-    if N.EspPlayer then
-        for _, plr in pairs(Players:GetPlayers()) do
-            if plr ~= LocalPlayer and plr.Character then
-                local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    makeESP(hrp, plr.Name, Color3.fromRGB(255, 50, 50))
-                end
-            end
-        end
-    end
-
-    if N.EspNPC then
-        for _, obj in pairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj:FindFirstChild("Humanoid")
-               and obj:FindFirstChild("HumanoidRootPart") then
-                makeESP(obj.HumanoidRootPart, obj.Name, Color3.fromRGB(100, 200, 255))
-            end
-        end
-    end
-end
-
--- ============================================================
--- ANTI-AFK
--- ============================================================
-task.spawn(function()
-    while task.wait(3) do
-        if not N.AntiAFK then continue end
-        pcall(function()
-            for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
-                conn:Disable()
-            end
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-        end)
-    end
-end)
-
--- ============================================================
--- NOCLIP (Stepped)
--- ============================================================
-RunService.Stepped:Connect(function()
-    if N.Noclip then
-        local char = getChar()
-        if char then
-            for _, part in pairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
+            clear_esp()
         end
     end
 end)
 
 -- ============================================================
--- MAIN LOOP
+-- LOOP — aplicar speed / jump
 -- ============================================================
-task.spawn(function()
-    while task.wait(0.1) do
-        if not N.Enabled then
-            N.Status = "parado"
-            continue
-        end
-        local ok, err = pcall(farmStep)
-        if not ok then
-            warn("[Nexus AF]", err)
-            N.Status = "erro: " .. tostring(err)
-        end
-    end
+RunServ.Heartbeat:Connect(function()
+    local char = Local.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    if hum.WalkSpeed ~= _G.Xyn.speed then hum.WalkSpeed = _G.Xyn.speed end
+    if hum.UseJumpPower and hum.JumpPower ~= _G.Xyn.jump then hum.JumpPower = _G.Xyn.jump end
 end)
 
 -- ============================================================
--- UI (Rayfield — profissional, com botão de fechar nativo)
+-- UI — ABAS
 -- ============================================================
-local Window = Rayfield:CreateWindow({
-    Name = "Nexus Auto Farm Pro",
-    LoadingTitle = "Carregando...",
-    LoadingSubtitle = "Blox Fruits — Sea " .. CURRENT_SEA,
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "NexusAF",
-        FileName = "Config"
-    },
-    KeySystem = false,
-})
+local FarmTab  = Window:CreateTab("Farm", 4483362458)
+local EspTab   = Window:CreateTab("ESP", 4483362458)
+local MiscTab  = Window:CreateTab("Misc", 4483362458)
+local DevTab   = Window:CreateTab("Dev", 4483362458)
 
--- ----- ABA: FARM -----
-local FarmTab = Window:CreateTab("Farm", 4483362458)
+-- ---- Farm ----
+FarmTab:CreateSection("Auto Farm")
 
 FarmTab:CreateToggle({
-    Name = "Ligar Auto Farm",
+    Name = "Auto Steal",
     CurrentValue = false,
-    Flag = "AutoFarm",
-    Callback = function(v)
-        N.Enabled = v
-        N.Status = v and "iniciando..." or "parado"
-    end
+    Flag = "AutoSteal",
+    Callback = function(v) _G.Xyn.auto_steal = v end,
 })
 
 FarmTab:CreateToggle({
-    Name = "Auto Chest",
+    Name = "Auto Hatch",
     CurrentValue = false,
-    Flag = "AutoChest",
-    Callback = function(v) N.AutoChest = v end
-})
-
-FarmTab:CreateToggle({
-    Name = "Auto Fruit",
-    CurrentValue = false,
-    Flag = "AutoFruit",
-    Callback = function(v) N.AutoFruit = v end
+    Flag = "AutoHatch",
+    Callback = function(v) _G.Xyn.auto_hatch = v end,
 })
 
 FarmTab:CreateSlider({
-    Name = "Velocidade do Tween",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
-    Suffix = "s",
-    CurrentValue = 0.15,
-    Flag = "TweenSpeed",
-    Callback = function(v) N.TweenSpeed = v end
+    Name = "Steal Range",
+    Range = {5, 100},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = 30,
+    Flag = "StealRange",
+    Callback = function(v) _G.Xyn.steal_range = v end,
 })
 
 FarmTab:CreateSlider({
-    Name = "Delay de Ataque",
-    Range = {0.05, 0.5},
-    Increment = 0.01,
+    Name = "Steal Delay",
+    Range = {0.05, 2},
+    Increment = 0.05,
     Suffix = "s",
-    CurrentValue = 0.1,
-    Flag = "AttackDelay",
-    Callback = function(v) N.AttackDelay = v end
+    CurrentValue = 0.3,
+    Flag = "StealDelay",
+    Callback = function(v) _G.Xyn.steal_delay = v end,
 })
 
--- ----- ABA: COMBATE -----
-local CombatTab = Window:CreateTab("Combate", 4483362458)
-
-CombatTab:CreateToggle({
-    Name = "Kill Aura",
-    CurrentValue = false,
-    Flag = "KillAura",
-    Callback = function(v) N.KillAura = v end
+FarmTab:CreateInput({
+    Name = "Remote Name (manual)",
+    PlaceholderText = "ex: StealEgg / GrabPet",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(txt) _G.Xyn.selected_remote = txt end,
 })
 
-CombatTab:CreateToggle({
-    Name = "Fast Attack",
-    CurrentValue = false,
-    Flag = "FastAttack",
-    Callback = function(v) N.FastAttack = v end
-})
-
-CombatTab:CreateToggle({
-    Name = "Auto Skill (usa Z/X/C/V)",
-    CurrentValue = false,
-    Flag = "AutoSkill",
-    Callback = function(v) N.AutoSkill = v end
-})
-
-CombatTab:CreateToggle({
-    Name = "Habilidade Z",
-    CurrentValue = false,
-    Flag = "SkillZ",
-    Callback = function(v) N.SkillZ = v end
-})
-
-CombatTab:CreateToggle({
-    Name = "Habilidade X",
-    CurrentValue = false,
-    Flag = "SkillX",
-    Callback = function(v) N.SkillX = v end
-})
-
-CombatTab:CreateToggle({
-    Name = "Habilidade C",
-    CurrentValue = false,
-    Flag = "SkillC",
-    Callback = function(v) N.SkillC = v end
-})
-
-CombatTab:CreateToggle({
-    Name = "Habilidade V",
-    CurrentValue = false,
-    Flag = "SkillV",
-    Callback = function(v) N.SkillV = v end
-})
-
--- ----- ABA: ESP -----
-local EspTab = Window:CreateTab("ESP", 4483362458)
+-- ---- ESP ----
+EspTab:CreateSection("Visual")
 
 EspTab:CreateToggle({
-    Name = "ESP Frutas",
+    Name = "ESP Ovos / Brainrots",
     CurrentValue = false,
-    Flag = "EspFruit",
-    Callback = function(v) N.EspFruit = v end
+    Flag = "ESP",
+    Callback = function(v) _G.Xyn.esp_enabled = v end,
 })
 
-EspTab:CreateToggle({
-    Name = "ESP Baús",
-    CurrentValue = false,
-    Flag = "EspChest",
-    Callback = function(v) N.EspChest = v end
-})
-
-EspTab:CreateToggle({
-    Name = "ESP Jogadores",
-    CurrentValue = false,
-    Flag = "EspPlayer",
-    Callback = function(v) N.EspPlayer = v end
-})
-
-EspTab:CreateToggle({
-    Name = "ESP NPCs",
-    CurrentValue = false,
-    Flag = "EspNPC",
-    Callback = function(v) N.EspNPC = v end
-})
-
--- ----- ABA: TELEPORTE -----
-local TpTab = Window:CreateTab("Teleporte", 4483362458)
-
-local islandNames = {}
-for name, _ in pairs(ISLANDS[CURRENT_SEA] or {}) do
-    table.insert(islandNames, name)
-end
-table.sort(islandNames)
-
-TpTab:CreateDropdown({
-    Name = "Selecionar Ilha",
-    Options = islandNames,
-    CurrentOption = {islandNames[1] or "N/A"},
-    Flag = "IslandSelect",
-    Callback = function(opt) N.SelectedIsland = opt[1] end
-})
-
-TpTab:CreateButton({
-    Name = "Teleportar (Tween)",
-    Callback = function()
-        local name = N.SelectedIsland
-        if name and ISLANDS[CURRENT_SEA][name] then
-            tweenTo(ISLANDS[CURRENT_SEA][name], 0.5)
-            Rayfield:Notify({
-                Title = "Teleporte",
-                Content = "Indo para " .. name,
-                Duration = 2
-            })
+EspTab:CreateColorPicker({
+    Name = "Cor do ESP",
+    Color = Color3.fromRGB(0, 255, 200),
+    Flag = "ESPColor",
+    Callback = function(c)
+        _G.Xyn.esp_color = c
+        for _, hl in pairs(EspCache) do
+            if hl and hl.Parent then hl.FillColor = c end
         end
-    end
+    end,
 })
 
--- ----- ABA: MISC -----
-local MiscTab = Window:CreateTab("Misc", 4483362458)
+-- ---- Misc ----
+MiscTab:CreateSection("Movimento")
 
-MiscTab:CreateToggle({
-    Name = "Anti-AFK",
-    CurrentValue = true,
-    Flag = "AntiAFK",
-    Callback = function(v) N.AntiAFK = v end
+MiscTab:CreateSlider({
+    Name = "WalkSpeed",
+    Range = {16, 350},
+    Increment = 1,
+    Suffix = " speed",
+    CurrentValue = 16,
+    Flag = "WalkSpeed",
+    Callback = function(v) _G.Xyn.speed = v end,
 })
 
-MiscTab:CreateToggle({
-    Name = "NoClip",
-    CurrentValue = false,
-    Flag = "Noclip",
-    Callback = function(v) N.Noclip = v end
+MiscTab:CreateSlider({
+    Name = "JumpPower",
+    Range = {50, 500},
+    Increment = 5,
+    Suffix = " power",
+    CurrentValue = 50,
+    Flag = "JumpPower",
+    Callback = function(v) _G.Xyn.jump = v end,
 })
 
 MiscTab:CreateButton({
     Name = "Reset Character",
     Callback = function()
-        local hum = getHum()
-        if hum then hum.Health = 0 end
-    end
+        local char = Local.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0 end
+        end
+    end,
 })
 
-MiscTab:CreateButton({
-    Name = "Coletar Baús (one-time)",
+-- ---- Dev ----
+DevTab:CreateSection("Debug")
+
+DevTab:CreateButton({
+    Name = "Dump Remotes (console F9)",
+    Callback = function() dump_remotes() end,
+})
+
+DevTab:CreateButton({
+    Name = "Destacar todos os Remotes no Explorer",
     Callback = function()
-        local oldChest = N.AutoChest
-        N.AutoChest = true
-        task.wait(5)
-        N.AutoChest = oldChest
-    end
+        for _, obj in ipairs(RS:GetDescendants()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                pcall(function() obj.Parent = RS end)
+            end
+        end
+    end,
 })
 
--- ============================================================
--- HUD DE TELEMETRIA (atualizado em tempo real)
--- ============================================================
-task.spawn(function()
-    while task.wait(0.5) do
-        local lvl = getLevel()
-        local sessionTime = formatTime(tick() - N.SessionStart)
-        local statusColor = N.Enabled and "[ON]" or "[OFF]"
-        local questStatus = N.HasQuest and "Missao ativa" or "Sem missao"
-
-        pcall(function()
-            Window:ChangeTitle("Nexus AF " .. statusColor ..
-                " | Lv " .. lvl .. " | Sea " .. CURRENT_SEA ..
-                " | " .. N.Status)
-        end)
-    end
-end)
-
--- ============================================================
--- START
--- ============================================================
 Rayfield:Notify({
-    Title = "Nexus Auto Farm Pro",
-    Content = "Carregado | Sea " .. CURRENT_SEA .. " | Ligue o Auto Farm.",
-    Duration = 4
+    Title = CONFIG.hub_name,
+    Content = "Hub carregado. Boa sorte, chefia.",
+    Duration = 5,
 })
-
-print("[Nexus AF] Carregado | Sea " .. CURRENT_SEA .. " | UI: Rayfield")

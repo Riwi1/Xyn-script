@@ -1,7 +1,7 @@
--- language: Lua, file: xyn_hub.lua
+-- language: Lua, file: xyn_bloxstrike.lua
 -- ============================================================
---  XYN HUB — Premium UI + Aimbot + ESP
---  Fix: Lag no Smoothness, Target Lock, Design melhorado.
+--  XYN HUB — Blox Strike Edition
+--  ESP via Highlight (Chams), Aimbot travado e Team Check
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -15,46 +15,24 @@ local LocalPlayer       = Players.LocalPlayer
 -- ----------------- Config -----------------
 local Config = {
     ESPEnabled     = false,
-    ESPBox         = false,
-    ESPName        = false,
-    ESPSkeleton    = false,
     AimbotEnabled  = false,
     TeamCheck      = true,
     WallCheck      = true,
     ShowFOV        = true,
     FOVSize        = 350,
-    Smoothness     = 0.15, -- O Lerp máximo seguro fica em ~0.85
+    Smoothness     = 0.15, 
 }
 
 local MAX_ESP_DISTANCE = 1000
-local ACCENT_COLOR = Color3.fromRGB(138, 43, 226) -- Roxo Xyn
+local ACCENT_COLOR = Color3.fromRGB(138, 43, 226)
 local BG_COLOR = Color3.fromRGB(18, 18, 22)
 local ROW_COLOR = Color3.fromRGB(28, 28, 35)
 
--- ----------------- Helpers -----------------
-local function makeDrawing(className, props)
-    local d = Drawing.new(className)
-    for k, v in pairs(props or {}) do d[k] = v end
-    return d
-end
-
-local function distColor(dist, maxDist)
-    local t = math.clamp(dist / maxDist, 0, 1)
-    return Color3.fromHSV(0.33 * (1 - t), 1, 1)
-end
-
-local SKELETON_CONNECTIONS = {
-    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
-    {"UpperTorso", "LeftUpperArm"}, {"UpperTorso", "RightUpperArm"},
-    {"LeftUpperArm", "LeftLowerArm"}, {"RightUpperArm", "RightLowerArm"},
-    {"LeftLowerArm", "LeftHand"}, {"RightLowerArm", "RightHand"},
-    {"LowerTorso", "LeftUpperLeg"}, {"LowerTorso", "RightUpperLeg"},
-    {"LeftUpperLeg", "LeftLowerLeg"}, {"RightUpperLeg", "RightLowerLeg"},
-    {"LeftLowerLeg", "LeftFoot"}, {"RightLowerLeg", "RightFoot"}
-}
+-- Variáveis do ESP (Highlight)
+local highlights = {}
 
 -- ============================================================
---  UI SYSTEM (XYN HUB)
+--  UI SYSTEM (Xyn Hub)
 -- ============================================================
 local function buildUI()
     local screenGui = Instance.new("ScreenGui")
@@ -62,7 +40,6 @@ local function buildUI()
     screenGui.ResetOnSpawn = false
     screenGui.Parent = game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- Toggle Button (Flutuante)
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Size = UDim2.new(0, 45, 0, 45)
     toggleBtn.Position = UDim2.new(0, 20, 0, 100)
@@ -78,15 +55,14 @@ local function buildUI()
     btnCorner.CornerRadius = UDim.new(1, 0)
     btnCorner.Parent = toggleBtn
 
-    -- Main Frame
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 260, 0, 520)
-    main.Position = UDim2.new(0.5, -130, 0.5, -260)
+    main.Size = UDim2.new(0, 260, 0, 360)
+    main.Position = UDim2.new(0.5, -130, 0.5, -180)
     main.BackgroundColor3 = BG_COLOR
     main.BorderSizePixel = 0
     main.Active = true
     main.Parent = screenGui
-    main.Visible = false -- Começa fechado
+    main.Visible = false
 
     local mainCorner = Instance.new("UICorner")
     mainCorner.CornerRadius = UDim.new(0, 10)
@@ -97,11 +73,10 @@ local function buildUI()
     stroke.Thickness = 1.5
     stroke.Parent = main
 
-    -- Title Bar
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 40)
     title.BackgroundColor3 = ROW_COLOR
-    title.Text = "  Xyn Hub | v1.0"
+    title.Text = "  Xyn Hub | Blox Strike"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 15
@@ -111,8 +86,7 @@ local function buildUI()
     local titleCorner = Instance.new("UICorner")
     titleCorner.CornerRadius = UDim.new(0, 10)
     titleCorner.Parent = title
-    
-    -- Scrolling area
+
     local scroll = Instance.new("ScrollingFrame")
     scroll.Size = UDim2.new(1, -10, 1, -50)
     scroll.Position = UDim2.new(0, 5, 0, 45)
@@ -126,21 +100,6 @@ local function buildUI()
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = scroll
 
-    -- Category Label
-    local function makeCategory(text, order)
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, 0, 0, 25)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = text
-        lbl.TextColor3 = ACCENT_COLOR
-        lbl.Font = Enum.Font.GothamBold
-        lbl.TextSize = 13
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.LayoutOrder = order
-        lbl.Parent = scroll
-    end
-
-    -- Modern Toggle Switch
     local function makeToggle(label, configKey, order)
         local row = Instance.new("TextButton")
         row.Size = UDim2.new(1, 0, 0, 40)
@@ -164,7 +123,6 @@ local function buildUI()
         txt.TextXAlignment = Enum.TextXAlignment.Left
         txt.Parent = row
 
-        -- Switch Background
         local switchBg = Instance.new("Frame")
         switchBg.Size = UDim2.new(0, 36, 0, 20)
         switchBg.Position = UDim2.new(1, -46, 0.5, -10)
@@ -175,7 +133,6 @@ local function buildUI()
         sCorner.CornerRadius = UDim.new(1, 0)
         sCorner.Parent = switchBg
 
-        -- Switch Dot
         local dot = Instance.new("Frame")
         dot.Size = UDim2.new(0, 14, 0, 14)
         dot.Position = UDim2.new(0, 3, 0.5, -7)
@@ -276,30 +233,21 @@ local function buildUI()
         end)
     end
 
-    -- Adicionando elementos na UI
-    makeCategory("VISUAL", 1)
-    makeToggle("ESP Master", "ESPEnabled", 2)
-    makeToggle("ESP Box", "ESPBox", 3)
-    makeToggle("ESP Name & Dist", "ESPName", 4)
-    makeToggle("ESP Skeleton", "ESPSkeleton", 5)
+    makeToggle("ESP (Highlight)", "ESPEnabled", 1)
+    makeToggle("Aimbot Master", "AimbotEnabled", 2)
+    makeToggle("Team Check", "TeamCheck", 3)
+    makeToggle("Wall Check", "WallCheck", 4)
+    makeToggle("Mostrar FOV", "ShowFOV", 5)
     
-    makeCategory("AIMBOT", 6)
-    makeToggle("Aimbot Master", "AimbotEnabled", 7)
-    makeToggle("Team Check", "TeamCheck", 8)
-    makeToggle("Wall Check", "WallCheck", 9)
-    makeToggle("Mostrar FOV", "ShowFOV", 10)
-    
-    makeSlider("FOV Size", 100, 1000, Config.FOVSize, 11, function(v) Config.FOVSize = v end)
-    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 12, function(v) Config.Smoothness = v end) -- Travado em 0.85
+    makeSlider("FOV Size", 100, 1000, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
+    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
 
-    -- Toggle UI Logic
     toggleBtn.MouseButton1Click:Connect(function()
         main.Visible = not main.Visible
         toggleBtn.Text = main.Visible and "X" or "☰"
         toggleBtn.BackgroundColor3 = main.Visible and Color3.fromRGB(200, 50, 50) or ACCENT_COLOR
     end)
 
-    -- Drag Logic (Botão Flutuante e Menu)
     local function makeDrag(frame, handle)
         local drag, start, pos
         handle.InputBegan:Connect(function(input)
@@ -325,17 +273,27 @@ end
 local ui = buildUI()
 
 -- ============================================================
---  ESP & AIMBOT
+--  ESP (Highlight API) & AIMBOT
 -- ============================================================
-local espData = {}
-local fovCircle = makeDrawing("Circle", {
-    Visible = false, Thickness = 1.5, Filled = false, 
-    Color = ACCENT_COLOR, Transparency = 0.5, NumSides = 40
-})
+local fovCircle = Drawing.new("Circle")
+fovCircle.Visible = false
+fovCircle.Thickness = 1.5
+fovCircle.Filled = false
+fovCircle.Color = ACCENT_COLOR
+fovCircle.Transparency = 0.5
+fovCircle.NumSides = 40
 
--- NOVO: Variável de Target Lock (evita ficar trocando de alvo e causar lag)
 local lockedTarget = nil
 
+-- Checagem de Time
+local function isTeammate(player)
+    if not Config.TeamCheck then return false end
+    if not player.Team then return false end
+    if not LocalPlayer.Team then return false end
+    return player.Team == LocalPlayer.Team
+end
+
+-- Raycast para parede
 local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
@@ -350,114 +308,41 @@ local function isVisible(targetPart)
     return true
 end
 
-local function clearEsp(player)
-    if espData[player] then
-        for _, obj in pairs(espData[player]) do
-            if typeof(obj) == "table" and obj.Remove then obj:Remove() 
-            elseif typeof(obj) == "Instance" then obj:Destroy() end
-        end
-        espData[player] = nil
-    end
-end
-
-local function ensureEsp(player)
-    if espData[player] then return end
-    local d = {}
-    if Config.ESPBox then d.box = makeDrawing("Square", { Visible = false, Thickness = 1 }) end
-    if Config.ESPName then 
-        d.name = makeDrawing("Text", { Visible = false, Size = 14, Center = true, Outline = true })
-        d.dist = makeDrawing("Text", { Visible = false, Size = 12, Center = true, Outline = true, Color = Color3.fromRGB(200, 200, 200) })
-    end
-    if Config.ESPSkeleton then
-        d.skel = {}
-        for i = 1, #SKELETON_CONNECTIONS do
-            d.skel[i] = makeDrawing("Line", { Visible = false, Thickness = 1 })
-        end
-    end
-    espData[player] = d
-end
-
-local function updateEsp()
-    if not Config.ESPEnabled then
-        for p, _ in pairs(espData) do clearEsp(p) end
-        return
-    end
-
+-- Sistema de Highlight ESP
+local function updateESP()
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local isTeammate = (Config.TeamCheck and player.Team == LocalPlayer.Team)
-            
-            ensureEsp(player)
-            local d = espData[player]
+        if player ~= LocalPlayer and player.Character then
             local char = player.Character
-            local hrp = char.HumanoidRootPart
-            local head = char:FindFirstChild("Head")
-
-            local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
-
-            if isTeammate or dist > MAX_ESP_DISTANCE or not head then
-                if d.box then d.box.Visible = false end
-                if d.name then d.name.Visible = false end
-                if d.dist then d.dist.Visible = false end
-                if d.skel then for _, l in pairs(d.skel) do l.Visible = false end end
-                continue
-            end
-
-            local topPos, onScreenTop = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-            local botPos, onScreenBot = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
-
-            if onScreenTop and onScreenBot and topPos.Z > 0 then
-                local height = math.abs(topPos.Y - botPos.Y)
-                local width = height * 0.6
+            
+            if Config.ESPEnabled and not isTeammate(player) and char:FindFirstChild("HumanoidRootPart") then
+                local dist = (Camera.CFrame.Position - char.HumanoidRootPart.Position).Magnitude
                 
-                if d.box then
-                    d.box.Visible = Config.ESPBox
-                    d.box.Size = Vector2.new(width, height)
-                    d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
+                if dist < MAX_ESP_DISTANCE then
+                    if not highlights[player] then
+                        local hl = Instance.new("Highlight")
+                        hl.Name = "XynESP"
+                        hl.Parent = char
+                        highlights[player] = hl
+                    end
+                    
+                    highlights[player].Enabled = true
+                    highlights[player].DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    
                     if Config.WallCheck then
-                        d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
-                    else
-                        d.box.Color = distColor(dist, MAX_ESP_DISTANCE)
-                    end
-                end
-
-                if d.name and d.dist then
-                    d.name.Visible = Config.ESPName
-                    d.name.Text = player.Name
-                    d.name.Position = Vector2.new(topPos.X, topPos.Y - 20)
-                    d.name.Color = Color3.fromRGB(255, 255, 255)
-
-                    d.dist.Visible = Config.ESPName
-                    d.dist.Text = math.floor(dist) .. "m"
-                    d.dist.Position = Vector2.new(topPos.X, botPos.Y + 5)
-                end
-
-                if d.skel then
-                    for i, conn in ipairs(SKELETON_CONNECTIONS) do
-                        local p1 = char:FindFirstChild(conn[1])
-                        local p2 = char:FindFirstChild(conn[2])
-                        local line = d.skel[i]
-                        if p1 and p2 and Config.ESPSkeleton then
-                            local s1, on1 = Camera:WorldToViewportPoint(p1.Position)
-                            local s2, on2 = Camera:WorldToViewportPoint(p2.Position)
-                            if on1 and on2 and s1.Z > 0 then
-                                line.Visible = true
-                                line.From = Vector2.new(s1.X, s1.Y)
-                                line.To = Vector2.new(s2.X, s2.Y)
-                                line.Color = distColor(dist, MAX_ESP_DISTANCE)
-                            else
-                                line.Visible = false
-                            end
+                        local head = char:FindFirstChild("Head")
+                        if head and isVisible(head) then
+                            highlights[player].FillColor = Color3.fromRGB(0, 255, 0)
                         else
-                            line.Visible = false
+                            highlights[player].FillColor = Color3.fromRGB(255, 50, 50)
                         end
+                    else
+                        highlights[player].FillColor = Color3.fromRGB(138, 43, 226)
                     end
+                else
+                    if highlights[player] then highlights[player].Enabled = false end
                 end
             else
-                if d.box then d.box.Visible = false end
-                if d.name then d.name.Visible = false end
-                if d.dist then d.dist.Visible = false end
-                if d.skel then for _, l in pairs(d.skel) do l.Visible = false end end
+                if highlights[player] then highlights[player].Enabled = false end
             end
         end
     end
@@ -466,32 +351,29 @@ end
 local function getClosestPlayer()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
-    -- TARGET LOCK: Verifica se o alvo atual ainda é válido
     if lockedTarget and lockedTarget.Parent then
         local enemyChar = lockedTarget.Parent
         local enemyHum = enemyChar:FindFirstChild("Humanoid")
+        local enemyPlayer = Players:GetPlayerFromCharacter(enemyChar)
         
-        if enemyHum and enemyHum.Health > 0 then
-            if not (Config.TeamCheck and Players:GetPlayerFromCharacter(enemyChar) and Players:GetPlayerFromCharacter(enemyChar).Team == LocalPlayer.Team) then
-                local screenPos, onScreen = Camera:WorldToViewportPoint(lockedTarget.Position)
-                if onScreen and screenPos.Z > 0 then
-                    local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
-                    if dist < Config.FOVSize then
-                        return lockedTarget -- Mantém o alvo travado
-                    end
+        if enemyHum and enemyHum.Health > 0 and enemyPlayer and not isTeammate(enemyPlayer) then
+            local screenPos, onScreen = Camera:WorldToViewportPoint(lockedTarget.Position)
+            if onScreen and screenPos.Z > 0 then
+                local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+                if dist < Config.FOVSize then
+                    return lockedTarget
                 end
             end
         end
-        lockedTarget = nil -- Se saiu do FOV ou morreu, destrava
+        lockedTarget = nil
     end
 
-    -- Se não tem alvo travado, procura o mais próximo
     local closest = nil
     local shortestDist = Config.FOVSize
 
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
-            if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
+            if isTeammate(player) then continue end
             
             local head = player.Character.Head
             if Config.WallCheck and not isVisible(head) then continue end
@@ -507,13 +389,12 @@ local function getClosestPlayer()
         end
     end
     
-    lockedTarget = closest -- Salva o novo alvo
+    lockedTarget = closest
     return closest
 end
 
--- Main Loop
 RunService.RenderStepped:Connect(function()
-    updateEsp()
+    updateESP()
 
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
@@ -527,24 +408,22 @@ RunService.RenderStepped:Connect(function()
         local target = getClosestPlayer()
         if target then
             local currentCF = Camera.CFrame
-            -- O ponto exato do alvo
             local targetPos = target.Position
-            
-            -- Correção de Lag: Limitamos o máximo de smoothness interno pra 0.85
-            -- Se o cara colocar no máximo, não vai travar a tela.
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
-            
             local targetCF = CFrame.new(currentCF.Position, targetPos)
             Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
         end
     end
 end)
 
--- Cleanup
-LocalPlayer.CharacterAdded:Connect(function()
-    for p, _ in pairs(espData) do clearEsp(p) end
-    espData = {}
-    lockedTarget = nil
+-- Limpeza
+Players.PlayerRemoving:Connect(function(player)
+    if highlights[player] then
+        highlights[player]:Destroy()
+        highlights[player] = nil
+    end
 end)
 
-print("[Xyn Hub] Carregado. Design atualizado e Target Lock ativado.")
+LocalPlayer.CharacterAdded:Connect(function()
+    lockedTarget = nil
+end)

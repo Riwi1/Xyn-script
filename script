@@ -1,7 +1,6 @@
--- language: Lua, file: aim_hub_v5.lua
+-- language: Lua, file: aim_hub_v5_1.lua
 -- ============================================================
---  AIM HUB v5 — ESP + Aimbot + UI Toggle + Team Check + Wall Check
---  Correção: FOV Mobile (Pixels) e Bug de mira atrás da câmera.
+--  AIM HUB v5.1 — Inicia com tudo OFF
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -14,15 +13,15 @@ local LocalPlayer       = Players.LocalPlayer
 
 -- ----------------- Config -----------------
 local Config = {
-    ESPEnabled     = true,
-    ESPBox         = true,
-    ESPName        = true,
-    ESPSkeleton    = true,
+    ESPEnabled     = false,   -- Tudo OFF por padrão
+    ESPBox         = false,
+    ESPName        = false,
+    ESPSkeleton    = false,
     AimbotEnabled  = false,
-    TeamCheck      = true,
+    TeamCheck      = true,    -- Time e Parede ON para evitar bans/erros
     WallCheck      = true,
-    ShowFOV        = true,   -- NOVO: Liga/Desliga o círculo
-    FOVSize        = 400,    -- Aumentado para caber na tela do celular
+    ShowFOV        = true,
+    FOVSize        = 400,
     Smoothness     = 0.15,
 }
 
@@ -85,7 +84,7 @@ local function buildUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 35)
     title.BackgroundColor3 = Color3.fromRGB(40, 120, 240)
-    title.Text = "  AIM HUB v5"
+    title.Text = "  AIM HUB v5.1"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
@@ -179,7 +178,6 @@ local function buildUI()
             local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
             fill.Size = UDim2.new(rel, 0, 1, 0)
             local val = min + (max - min) * rel
-            -- Se o slider for de FOV, não mostrar decimais
             if label == "FOV Size" then
                 lbl.Text = label .. " : " .. string.format("%.0f", val)
             else
@@ -215,7 +213,6 @@ local function buildUI()
     makeToggle("Wall", "WallCheck", "WALL CHECK", 7)
     makeToggle("Fov", "ShowFOV", "MOSTRAR FOV", 8)
     
-    -- Slider de FOV vai de 100 a 1000 pixels
     makeSlider(100, 1000, Config.FOVSize, "FOV Size", 9, function(v) Config.FOVSize = v end)
     makeSlider(0.02, 1, Config.Smoothness, "Aim Smoothness", 10, function(v) Config.Smoothness = v end)
 
@@ -343,7 +340,6 @@ local function updateEsp()
             local topPos, onScreenTop = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
             local botPos, onScreenBot = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
 
-            -- Correção 2: Z > 0 (Garante que não está atrás da câmera)
             if onScreenTop and onScreenBot and topPos.Z > 0 then
                 local height = math.abs(topPos.Y - botPos.Y)
                 local width = height * 0.6
@@ -418,7 +414,6 @@ local function getClosestPlayer()
             
             local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
             
-            -- Correção 2: Z > 0 (Garante que o inimigo está na frente)
             if onScreen and screenPos.Z > 0 then
                 local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
                 if dist < shortestDist then
@@ -437,7 +432,6 @@ RunService.RenderStepped:Connect(function()
 
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
-    -- Desenha o FOV apenas se o Aimbot estiver ligado E a opção Mostrar FOV estiver ON
     fovCircle.Visible = Config.AimbotEnabled and Config.ShowFOV
     if fovCircle.Visible then
         fovCircle.Position = center
@@ -449,7 +443,6 @@ RunService.RenderStepped:Connect(function()
         if target then
             local currentCF = Camera.CFrame
             local targetCF = CFrame.new(currentCF.Position, target.Position)
-            -- O Lerp com o Smoothness cria a suavização
             Camera.CFrame = currentCF:Lerp(targetCF, Config.Smoothness)
         end
     end
@@ -461,4 +454,4 @@ LocalPlayer.CharacterAdded:Connect(function()
     espData = {}
 end)
 
-print("[AIM HUB v5] FOV Mobile corrigido e ativado.")
+print("[AIM HUB v5.1] Tudo OFF. Pronto para ativar.")

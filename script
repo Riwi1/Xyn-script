@@ -1,6 +1,6 @@
--- language: Lua, file: xyn_bloxstrike_final.lua
+-- language: Lua, file: xyn_hub_hardfix.lua
 -- ============================================================
---  XYN HUB — Blox Strike (Engine-Level Aimbot Fix)
+--  XYN HUB — Blox Strike (Hardfix Xeno Mobile)
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -16,14 +16,12 @@ local Config = {
     ESPEnabled     = false,
     AimbotEnabled  = false,
     TeamCheck      = true,
-    WallCheckESP   = true,
-    WallCheckAim   = true,  -- NOVO: Separado do ESP
+    WallCheck      = true,
     ShowFOV        = true,
     FOVSize        = 150, 
-    Smoothness     = 0.15, 
+    Smoothness     = 0.25, 
 }
 
-local MAX_ESP_DISTANCE = 1000
 local ACCENT_COLOR = Color3.fromRGB(138, 43, 226)
 local BG_COLOR = Color3.fromRGB(18, 18, 22)
 local ROW_COLOR = Color3.fromRGB(28, 28, 35)
@@ -53,8 +51,8 @@ local function buildUI()
     btnCorner.Parent = toggleBtn
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 260, 0, 400)
-    main.Position = UDim2.new(0.5, -130, 0.5, -200)
+    main.Size = UDim2.new(0, 260, 0, 360)
+    main.Position = UDim2.new(0.5, -130, 0.5, -180)
     main.BackgroundColor3 = BG_COLOR
     main.BorderSizePixel = 0
     main.Active = true
@@ -230,15 +228,15 @@ local function buildUI()
         end)
     end
 
-    makeToggle("ESP (Box & Name)", "ESPEnabled", 1)
+    makeToggle("ESP Master", "ESPEnabled", 1)
     makeToggle("Aimbot Master", "AimbotEnabled", 2)
     makeToggle("Team Check", "TeamCheck", 3)
-    makeToggle("Wall Check (ESP)", "WallCheckESP", 4)
-    makeToggle("Wall Check (Aimbot)", "WallCheckAim", 5)
-    makeToggle("Mostrar FOV", "ShowFOV", 6)
+    makeToggle("Wall Check", "WallCheck", 4)
+    makeToggle("Mostrar FOV", "ShowFOV", 5)
     
-    makeSlider("FOV Size", 0, 400, Config.FOVSize, 7, function(v) Config.FOVSize = v end)
-    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 8, function(v) Config.Smoothness = v end)
+    -- Slider 0 a 300 cravado
+    makeSlider("FOV Size", 0, 300, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
+    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
 
     toggleBtn.MouseButton1Click:Connect(function()
         main.Visible = not main.Visible
@@ -290,14 +288,13 @@ local function isTeammate(player)
     return player.Team == LocalPlayer.Team
 end
 
-local function isVisible(targetPart, checkAim)
+local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
     raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
     local result = Workspace:Raycast(origin, direction, raycastParams)
-    
     if result then
         if result.Instance:IsDescendantOf(targetPart.Parent) then return true end
         return false
@@ -305,26 +302,7 @@ local function isVisible(targetPart, checkAim)
     return true
 end
 
-local function getESP(player)
-    if not espData[player] then
-        espData[player] = {
-            box = Drawing.new("Square"),
-            name = Drawing.new("Text"),
-            dist = Drawing.new("Text")
-        }
-        espData[player].box.Thickness = 1
-        espData[player].box.Filled = false
-        espData[player].name.Size = 14
-        espData[player].name.Center = true
-        espData[player].name.Outline = true
-        espData[player].dist.Size = 12
-        espData[player].dist.Center = true
-        espData[player].dist.Outline = true
-        espData[player].dist.Color = Color3.fromRGB(200, 200, 200)
-    end
-    return espData[player]
-end
-
+-- ESP ultra simplificado pra evitar crash no Xeno
 local function updateESP()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
@@ -333,22 +311,32 @@ local function updateESP()
             local head = char:FindFirstChild("Head")
             local hum = char:FindFirstChild("Humanoid")
             
-            local d = getESP(player)
-            if not d then continue end
-            
             if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 500 then
-                d.box.Visible = false
-                d.name.Visible = false
-                d.dist.Visible = false
+                if espData[player] then
+                    pcall(function() espData[player].box.Visible = false end)
+                    pcall(function() espData[player].name.Visible = false end)
+                end
                 continue
             end
 
+            if not espData[player] then
+                local b = Drawing.new("Square")
+                local n = Drawing.new("Text")
+                b.Thickness = 1
+                b.Filled = false
+                n.Size = 14
+                n.Center = true
+                n.Outline = true
+                n.Color = Color3.fromRGB(255, 255, 255)
+                espData[player] = { box = b, name = n }
+            end
+
+            local d = espData[player]
             local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
-            
-            if dist > MAX_ESP_DISTANCE then
-                d.box.Visible = false
-                d.name.Visible = false
-                d.dist.Visible = false
+
+            if dist > 1000 then
+                pcall(function() d.box.Visible = false end)
+                pcall(function() d.name.Visible = false end)
                 continue
             end
 
@@ -359,29 +347,24 @@ local function updateESP()
                 local height = math.abs(topPos.Y - botPos.Y)
                 local width = height * 0.6
                 
-                d.box.Visible = true
-                d.box.Size = Vector2.new(width, height)
-                d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
-                
-                if Config.WallCheckESP then
-                    d.box.Color = isVisible(head, false) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
-                else
-                    local t = math.clamp(dist / MAX_ESP_DISTANCE, 0, 1)
-                    d.box.Color = Color3.fromHSV(0.33 * (1 - t), 1, 1)
-                end
+                pcall(function()
+                    d.box.Visible = true
+                    d.box.Size = Vector2.new(width, height)
+                    d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
+                    
+                    if Config.WallCheck then
+                        d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
+                    else
+                        d.box.Color = Color3.fromRGB(138, 43, 226)
+                    end
 
-                d.name.Visible = true
-                d.name.Text = player.Name
-                d.name.Position = Vector2.new(topPos.X, topPos.Y - 20)
-                d.name.Color = Color3.fromRGB(255, 255, 255)
-
-                d.dist.Visible = true
-                d.dist.Text = math.floor(dist) .. "m"
-                d.dist.Position = Vector2.new(topPos.X, botPos.Y + 5)
+                    d.name.Visible = true
+                    d.name.Text = player.Name .. " [" .. math.floor(dist) .. "m]"
+                    d.name.Position = Vector2.new(topPos.X, topPos.Y - 20)
+                end)
             else
-                d.box.Visible = false
-                d.name.Visible = false
-                d.dist.Visible = false
+                pcall(function() d.box.Visible = false end)
+                pcall(function() d.name.Visible = false end)
             end
         end
     end
@@ -391,17 +374,13 @@ local function getClosestPlayer()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
     if lockedTarget and lockedTarget.Parent then
-        local enemyChar = lockedTarget.Parent
-        local enemyHum = enemyChar:FindFirstChild("Humanoid")
-        local enemyPlayer = Players:GetPlayerFromCharacter(enemyChar)
-        
-        if enemyHum and enemyHum.Health > 0 and enemyPlayer and not isTeammate(enemyPlayer) then
+        local char = lockedTarget.Parent
+        local hum = char:FindFirstChild("Humanoid")
+        local plr = Players:GetPlayerFromCharacter(char)
+        if hum and hum.Health > 0 and plr and not isTeammate(plr) then
             local screenPos, onScreen = Camera:WorldToViewportPoint(lockedTarget.Position)
-            if onScreen and screenPos.Z > 0 then
-                local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
-                if dist < Config.FOVSize then
-                    return lockedTarget
-                end
+            if onScreen and screenPos.Z > 0 and (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude < Config.FOVSize then
+                return lockedTarget
             end
         end
         lockedTarget = nil 
@@ -417,8 +396,7 @@ local function getClosestPlayer()
             local hrp = char:FindFirstChild("HumanoidRootPart")
             
             if not isTeammate(player) and hum and hum.Health > 0 and hrp then
-                if Config.WallCheckAim and not isVisible(hrp, true) then continue end
-                
+                if Config.WallCheck and not isVisible(hrp) then continue end
                 local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
                 if onScreen and screenPos.Z > 0 then
                     local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
@@ -436,14 +414,13 @@ local function getClosestPlayer()
 end
 
 RunService.Heartbeat:Connect(function()
-    updateESP()
+    pcall(updateESP)
 end)
 
 -- ============================================================
---  AIMBOT FIX (BindToRenderStep)
+--  AIMBOT FIX (BindToRenderStep Camera + 1)
 -- ============================================================
--- Colocamos a prioridade da câmera + 1 para o Aimbot rodar DEPOIS que o jogo puxar a câmera.
-RunService:BindToRenderStep("XynAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+RunService:BindToRenderStep("XynAimbot", 201, function()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
     fovCircle.Visible = Config.AimbotEnabled and Config.ShowFOV
@@ -455,34 +432,17 @@ RunService:BindToRenderStep("XynAimbot", Enum.RenderPriority.Camera.Value + 1, f
     if Config.AimbotEnabled then
         local target = getClosestPlayer()
         if target then
-            -- O jogo não pode sobrescrever se a câmera estiver no modo Scriptable
             if Camera.CameraType ~= Enum.CameraType.Scriptable then
                 Camera.CameraType = Enum.CameraType.Scriptable
             end
-
-            local currentCF = Camera.CFrame
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
-            local targetCF = CFrame.new(currentCF.Position, target.Position)
-            
-            -- Puxa a mira de forma suave
-            Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
+            local targetCF = CFrame.new(Camera.CFrame.Position, target.Position)
+            Camera.CFrame = Camera.CFrame:Lerp(targetCF, safeSmooth)
         else
-            -- Se não tem alvo, libera a câmera (volta a funcionar no dedo)
             Camera.CameraType = Enum.CameraType.Custom
         end
     else
         Camera.CameraType = Enum.CameraType.Custom
-    end
-end)
-
-Players.PlayerRemoving:Connect(function(player)
-    if espData[player] then
-        pcall(function()
-            espData[player].box:Remove()
-            espData[player].name:Remove()
-            espData[player].dist:Remove()
-        end)
-        espData[player] = nil
     end
 end)
 

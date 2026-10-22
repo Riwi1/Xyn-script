@@ -1,6 +1,7 @@
--- language: Lua, file: xyn_hub_final.lua
+-- language: Lua, file: xyn_hub_pc.lua
 -- ============================================================
---  XYN HUB — Blox Strike (Aimbot Forçado + ESP Clean)
+--  XYN HUB — Blox Strike (PC Edition)
+--  Aimbot via mousemoverel. ESP Limpo.
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -16,10 +17,10 @@ local Config = {
     ESPEnabled     = false,
     AimbotEnabled  = false,
     TeamCheck      = true,
-    WallCheck      = false, -- DESLIGADO POR PADRÃO PRA PUXAR
+    WallCheck      = true,
     ShowFOV        = true,
     FOVSize        = 150, 
-    Smoothness     = 0.3, 
+    Smoothness     = 4.5,  -- No PC, o smoothness funciona como um multiplicador (maior = mais lento)
 }
 
 local ACCENT_COLOR = Color3.fromRGB(138, 43, 226)
@@ -71,7 +72,7 @@ local function buildUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 40)
     title.BackgroundColor3 = ROW_COLOR
-    title.Text = "  Xyn Hub | Blox Strike"
+    title.Text = "  Xyn Hub | PC Edition"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 15
@@ -211,18 +212,18 @@ local function buildUI()
         end
 
         track.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
                 dragging = true
                 update(input)
             end
         end)
         UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
                 update(input)
             end
         end)
         UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
                 dragging = false
             end
         end)
@@ -235,7 +236,7 @@ local function buildUI()
     makeToggle("Mostrar FOV", "ShowFOV", 5)
     
     makeSlider("FOV Size", 0, 300, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
-    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
+    makeSlider("Smoothness", 1.0, 15.0, Config.Smoothness, 7, function(v) Config.Smoothness = v end) -- Ajustado pra PC
 
     toggleBtn.MouseButton1Click:Connect(function()
         main.Visible = not main.Visible
@@ -246,18 +247,18 @@ local function buildUI()
     local function makeDrag(frame, handle)
         local drag, start, pos
         handle.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
                 drag, start, pos = true, input.Position, frame.Position
             end
         end)
         UserInputService.InputChanged:Connect(function(input)
-            if drag and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            if drag and input.UserInputType == Enum.UserInputType.MouseMovement then
                 local delta = input.Position - start
                 frame.Position = UDim2.new(pos.X.Scale, pos.X.Offset + delta.X, pos.Y.Scale, pos.Y.Offset + delta.Y)
             end
         end)
         UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
         end)
     end
 
@@ -292,9 +293,9 @@ local function isVisible(targetPart)
     local direction = (targetPart.Position - origin)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera, targetPart.Parent}
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
     local result = Workspace:Raycast(origin, direction, raycastParams)
-    return result == nil
+    return result == nil or result.Instance:IsDescendantOf(targetPart.Parent)
 end
 
 local function updateESP()
@@ -305,7 +306,7 @@ local function updateESP()
             local head = char:FindFirstChild("Head")
             local hum = char:FindFirstChild("Humanoid")
             
-            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 1000 then
+            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 500 then
                 if espData[player] then
                     pcall(function() espData[player].box.Visible = false end)
                     pcall(function() espData[player].name.Visible = false end)
@@ -328,8 +329,7 @@ local function updateESP()
             local d = espData[player]
             local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
 
-            -- Limite de 300 metros pro ESP não pegar cara do outro lado do mapa
-            if dist > 300 then
+            if dist > 500 then
                 pcall(function() d.box.Visible = false end)
                 pcall(function() d.name.Visible = false end)
                 continue
@@ -413,9 +413,9 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
---  AIMBOT FIX
+--  AIMBOT PC (MOUSEMOVEREL)
 -- ============================================================
-RunService:BindToRenderStep("XynAimbot", 201, function()
+RunService.RenderStepped:Connect(function()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
     fovCircle.Visible = Config.AimbotEnabled and Config.ShowFOV
@@ -427,20 +427,32 @@ RunService:BindToRenderStep("XynAimbot", 201, function()
     if Config.AimbotEnabled then
         local target = getClosestPlayer()
         if target then
-            Camera.CameraType = Enum.CameraType.Scriptable
-            local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
-            -- Olha diretamente para o RootPart do inimigo
-            local targetCF = CFrame.lookAt(Camera.CFrame.Position, target.Position)
-            Camera.CFrame = Camera.CFrame:Lerp(targetCF, safeSmooth)
-        else
-            Camera.CameraType = Enum.CameraType.Custom
+            -- Pega a posição do alvo na tela
+            local screenPos, onScreen = Camera:WorldToViewportPoint(target.Position)
+            
+            if onScreen and screenPos.Z > 0 then
+                -- Calcula a distância do centro da tela até o alvo
+                local deltaX = screenPos.X - center.X
+                local deltaY = screenPos.Y - center.Y
+                
+                -- Aplica o smoothness (divisão)
+                local safeSmooth = math.max(Config.Smoothness, 1.0)
+                local moveX = deltaX / safeSmooth
+                local moveY = deltaY / safeSmooth
+                
+                -- O SEGREDO DO PC: Usa mousemoverel se o executor suportar
+                if mousemoverel then
+                    mousemoverel(moveX, moveY)
+                else
+                    -- Fallback: Move a câmera (pode falhar em alguns jogos)
+                    local targetCF = CFrame.lookAt(Camera.CFrame.Position, target.Position)
+                    Camera.CFrame = Camera.CFrame:Lerp(targetCF, 0.2) 
+                end
+            end
         end
-    else
-        Camera.CameraType = Enum.CameraType.Custom
     end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     lockedTarget = nil
-    Camera.CameraType = Enum.CameraType.Custom
 end)

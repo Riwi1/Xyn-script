@@ -1,209 +1,272 @@
---//  ╔══════════════════════════════════════╗
---//  ║  BLOX STRIKE — AIMBOT + GUI           ║
---//  ║  Compatível: Synapse X, Krystal,      ║
---//  ║    Fluxus, Hydrogen, Noolix, etc.     ║
---//  ╚══════════════════════════════════════╝
+-- ============================================================
+--  BLOX STRIKE HUB — para Executor XENO
+--  Features: Aimbot, Auto Farm/Attack, Speed, Noclip, XP Boost
+--  Feito por Cyber-Tiel-Coder
+-- ============================================================
 
-local Players       = game:GetService("Players")
-local RunService    = game:GetService("RunService")
-local UserInput     = game:GetService("UserInputService")
-local TweenService  = game:GetService("TweenService")
+local Players        = game:GetService("Players")
+local TweenService   = game:GetService("TweenService")
+local UserInput      = game:GetService("UserInputService")
+local RunService     = game:GetService("RunService")
+local RepStorage     = game:GetService("ReplicatedStorage")
 
-local LocalPlayer   = Players.LocalPlayer
-local Camera        = workspace.CurrentCamera
+local LocalPlayer    = Players.LocalPlayer
+local Root           = LocalPlayer.Character and LocalPlayer.Character:WaitForChild("HumanoidRootPart") or LocalPlayer.Character:WaitForChild("HumanoidRootPart")
+local Humanoid       = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
 
---// Tema
-local T = {
-  Accent = Color3.fromRGB(240, 70, 90),
-  Panel  = Color3.fromRGB(26, 26, 32),
-  Box    = Color3.fromRGB(40, 40, 48),
-  Text   = Color3.fromRGB(255, 255, 255),
-  Dim    = Color3.fromRGB(175, 175, 185),
+-- ---------- Cores do tema ----------
+local THEME = {
+    bg        = Color3.fromRGB(20, 22, 30),
+    panel     = Color3.fromRGB(28, 31, 41),
+    accent    = Color3.fromRGB(90, 170, 255),
+    accent2   = Color3.fromRGB(160, 110, 255),
+    text      = Color3.fromRGB(255, 255, 255),
+    dim       = Color3.fromRGB(170, 178, 195),
 }
 
---// Config
-local C = {
-  Enabled  = true,
-  FOV      = 160,
-  LockMode = "Nearest",   -- Nearest | Health | Focus
-  HoldAim  = false,       -- segurar tecla (R2) vs sempre ativo
-  AimKey   = Enum.UserInputType.MouseButton2,
-  ShowFOV  = true,
+-- ---------- Helpers de GUI ----------
+local function roundedRect(size, color, parent)
+    local s = Instance.new("Frame")
+    s.Size = UDim2.new(size.X.Scale, 0, size.Y.Scale, 0)
+    s.BackgroundColor3 = color
+    s.BorderSizePixel = 0
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.fromPercent(0.12)
+    c.Parent = s
+    return s
+end
+
+local function label(text, pos, size, color, parent, scale)
+    local l = Instance.new("Label")
+    l.Text = text
+    l.Font = Enum.Font.GothamBold
+    l.TextColor3 = color or THEME.text
+    l.BackgroundTransparency = 1
+    l.Size = UDim2.new(size and size.X.Scale or 1, 0, size and size.Y.Scale or 1, 0)
+    l.Position = pos
+    if scale then l.TextScaled = true end
+    l.Parent = parent
+    return l
+end
+
+local function toggle(on)
+    local t = Instance.new("Frame")
+    t.BackgroundTransparency = 1
+    t.Size = UDim2.new(0.13, 0, 0.06, 0)
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = on and THEME.accent or Color3.fromRGB(55, 60, 75)
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.fromPercent(0.5); c.Parent = bg
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0.5, 0, 1, 0)
+    knob.Position = UDim2.new(on and 0.5 or 0, 0, 0, 0)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    local kc = Instance.new("UICorner"); kc.CornerRadius = UDim.fromPercent(0.5); kc.Parent = knob
+    bg.Parent = t; knob.Parent = t
+    return t
+end
+
+-- ---------- Container principal ----------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BloxStrikeHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ResetWithSpawnPoints = false
+ScreenGui.IgnoreGUIScalePadding = true
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Painel
+local Main = roundedRect({X=0.32, Y=0.5}, THEME.bg, ScreenGui)
+Main.Position = UDim2.new(0.5, -180, 0.5, -240)
+Main.Active = true
+local pad = Instance.new("UIPadding"); pad.PaddingTop = UDim.fromPercent(0.06); pad.PaddingBottom = UDim.fromPercent(0.06); pad.PaddingLeft = UDim.fromPercent(0.06); pad.PaddingRight = UDim.fromPercent(0.06); pad.Parent = Main
+
+-- Barra de título
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0.12, 0)
+TitleBar.BackgroundTransparency = 1
+TitleBar.Parent = Main
+local grad = Instance.new("UIGradient")
+grad.Color = ColorSequence.new({Color3.new(90,170,255), Color3.new(160,110,255)})
+grad.Transparency = UDim2.new(0,0,0.4,0)
+grad.Offset = Vector2.new(0,0)
+grad.Parent = TitleBar
+
+label("◆ BLOX STRIKE", UDim2.new(0.06,0,0,0), {X=1,Y=0.7}, THEME.text, TitleBar)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0.08, 0, 0.12, 0)
+closeBtn.Position = UDim2.new(0.92, 0, 0, 0)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 90)
+closeBtn.Text = "✕"
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.BackgroundTransparency = 1
+closeBtn.Parent = TitleBar
+
+local function hide() Main.Visible = false end
+local function show() Main.Visible = true end
+closeBtn.MouseButton1Connect(function() hide() end)
+Main.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        local start = i.Position
+        local conn
+        conn = UserInput.InputChanged:Connect(function(ii)
+            if ii.UserInputType == Enum.UserInputType.MouseMovement then
+                Main.Position = UDim2.new(0.5, start.X - Main.AbsolutePosition.X + (Main.Size.X.Offset and 0 or 0), 0.5, start.Y - Main.AbsolutePosition.Y)
+            end
+        end)
+        wait()
+        UserInput.InputEnded:Connect(function(ii) if ii.UserInputType == Enum.UserInputType.MouseButton1 then conn:Disconnect() end end)
+    end
+end)
+
+-- ---------- Área de opções ----------
+local List = Instance.new("UIListLayout")
+List.FillDirection = Enum.FillDirection.Horizontal
+List.VerticalAlignment = Enum.VerticalAlignment.Bottom
+List.Padding = UDim.fromPixels(14)
+List.Parent = Main
+
+-- ---------- Estado global ----------
+local Settings = {
+    aimbot   = false,
+    autoAtk  = false,
+    speed    = false,
+    noclip   = false,
+    xpBoost  = false,
 }
 
---// Círculo de FOV (drawing, funciona em qualquer executor)
-local FOV = drawing.new("Circle")
-FOV.NumPoints = 72; FOV.Thickness = 1.5
-FOV.Color = T.Accent; FOV.FillColor = Color3.new(0,0,0,0)
-FOV.Visible = false
+local AIM_RANGE   = 120
+local AIM_BONE    = "Head"
+local SPRINT_AMT  = 35
 
---// Helpers
-local function inst(parent, class, p)
-  local i = Instance.new(class)
-  for k,v in pairs(p or {}) do i[k] = v end
-  if parent then i.Parent = parent end
-  return i
-end
-local function hrp(c) return c:FindFirstChild("HumanoidRootPart") end
-local function health(plr)
-  local h = plr.Character and plr.Character:FindFirstChild("Humanoid") or plr.Character and plr.Character.Humanoid
-  return h and h.Health or 0
-end
-
---// Alvo
+-- ---------- Busca de alvo ----------
 local function findTarget()
-  local best, bv = nil, math.inf
-  if C.LockMode == "Focus" then
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    rp.FilterObjects = {Camera}
-    local r = workspace:Raycast(Camera.CFrame.Position, Camera.CDirection * 2500, rp)
-    if r and r.Instance then
-      for _,p in pairs(Players.GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and r.Instance:IsDescendantOf(p.Character) then
-          local h = hrp(p.Character)
-          if h then best, bv = h, 0 end
-          break
+    local rootPos = Root and Root.Position
+    if not rootPos then return nil end
+    local best, bestDist = nil, math.inf
+    -- NPCs (inimigos)
+    for _, v in pairs(game.Workspace:GetChildren()) do
+        local hum = v:FindFirstChildOfClass("Humanoid")
+        local rp  = v:FindFirstChild("HumanoidRootPart") or v:FindFirstChild("Torso")
+        if hum and rp and v ~= LocalPlayer.Character then
+            local d = (rp.Position - rootPos).Magnitude
+            if d < AIM_RANGE and d < bestDist then
+                -- não pode ver parede simples (opcional)
+                best, bestDist = v, d
+            end
         end
-      end
+    end
+    -- Jogadores
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local rp = p.Character:FindFirstChild("HumanoidRootPart")
+            if rp then
+                local d = (rp.Position - rootPos).Magnitude
+                if d < AIM_RANGE and d < bestDist then best, bestDist = p.Character, d end
+            end
+        end
     end
     return best
-  end
-  for _,p in pairs(Players.GetPlayers()) do
-    if p ~= LocalPlayer and p.Character then
-      local h = hrp(p.Character)
-      if h then
-        local d = (h.Position - Camera.CFrame.Position).Magnitude
-        if d <= C.FOV then
-          local v = C.LockMode == "Health" and health(p) or d
-          if v < bv then best, bv = h, v end
-        end
-      end
-    end
-  end
-  return best
 end
 
---// Loop de aim
+local function getHead(c)
+    if not c then return nil end
+    local h = c:FindFirstChild(AIM_BONE) or c:FindFirstChild("Head")
+    return h and h.Position
+end
+
+-- ---------- Aimbot ----------
+local aimConn
 RunService.RenderStepped:Connect(function()
-  FOV.Position = Camera.CFrame.Position + Camera.CDirection * 60
-  FOV.Radius   = C.FOV
-  FOV.Visible  = C.ShowFOV and C.Enabled
-  local active = C.Enabled and (not C.HoldAim or UserInput:IsKeyDown(C.AimKey))
-  if active then
-    local t = findTarget()
-    if t then Camera.CFrame = CFrame.new(Camera.CFrame.Position, t.Position + Vector3.new(0,1.5,0)) end
-  end
-end)
-
---================ GUI =================---
-local sGui = inst(nil, "ScreenGui", { Name = "BloxAimbot", IgnoreGUIInset = true })
-
-local panel = inst(sGui, "Frame", {
-  Size = UDim2.new(0,316,0,404), Position = UDim2.new(0.5,-158,0.5,-202),
-  BackgroundColor = T.Panel, BackgroundTransparency = 0.04, Active = true, Draggable = true,
-})
-inst(panel, "UICorner", { CornerStyle = "PB", CornerRadius = UDim2.new(0,18) })
-inst(panel, "UIStroke", { Thickness = 2, Color = T.Accent, Transparency = 0.4 })
-
--- Title
-local title = inst(panel, "TextLabel", {
-  Size = UDim2.new(0.62,0,0,26), Position = UDim2.new(0,18,0,14),
-  Text = "⬛ BLOX AIMBOT", Font = Enum.Font.GothamBold, TextColor = T.Text,
-  BackgroundTransparency = 1, TextScaled = false,
-})
-inst(title, "UIStroke", { Thickness = 1.5, Color = T.Accent })
-
--- Close button
-local close = inst(panel, "TextButton", {
-  Size = UDim2.new(0,26,0,26), Position = UDim2.new(0,0.97,0,0.06),
-  Text = "✕", Font = Enum.Font.GothamBold, TextColor = T.Text, BackgroundColor = T.Box,
-  BorderSizePixel = 0, AutoButtonColor = false, BackgroundTransparency = 0.2,
-})
-inst(close, "UICorner", { CornerRadius = UDim2.new(0,8) })
-close.MouseButton1Connected:Connect(function()
-  TweenService:Create(panel, TweenInfo.new(0.3,{EasingStyle.Quart,EasingDirection.Out}),
-    {BackgroundTransparency = 1, Size = UDim2.new(0,316,0,404), Position = UDim2.new(0.5,-158,0.5,-360)}):Complete()
-  wait(0.35); sGui:Destroy()
-end)
-
--- Toggle switch helper
-local function toggle(parent, y, cfg)
-  local row = inst(parent, "Frame", { Size = UDim2.new(1,0,0,34), Position = UDim2.new(0,0,0,y), BackgroundTransparency = 1 })
-  inst(row, "UIListLayout", { Padding = UDim2.new(0,14,0,0), HorizontalAlignment = "Center", VerticalAlignment = "Top" })
-  local lbl = inst(row, "TextLabel", { Size = UDim2.new(0.5,0,1,0), Text = cfg.name, Font = Enum.Font.GothamIntermediate,
-    TextColor = T.Text, BackgroundTransparency = 1, TextXAlignment = "Left" })
-  local sw = inst(row, "Frame", { Size = UDim2.new(0,46,0,26), BackgroundColor = T.Box, BackgroundTransparency = 0.5, Active = true, Draggable = false })
-  inst(sw, "UICorner", { CornerRadius = UDim2.new(0,13) })
-  local knob = inst(sw, "Frame", { Size = UDim2.new(0,22,0,22), Position = UDim2.new(0,3,0,2), BackgroundColor = T.Text })
-  inst(knob, "UICorner", { CornerRadius = UDim2.new(0,11) })
-
-  local function set(on)
-    cfg.value = on
-    local goal = on and UDim2.new(0,23,0,2) or UDim2.new(0,2,0,2)
-    local col  = on and T.Accent or T.Box
-    TweenService:Create(knob, TweenInfo.new(0.25), { Position = goal }):Complete()
-    TweenService:Create(sw,   TweenInfo.new(0.25), { BackgroundColor = col, BackgroundTransparency = on and 0 or 0.5 }):Complete()
-  end
-  sw.MouseButton1Connected:Connect(function() set(not cfg.value) end)
-  set(cfg.value)
-  return set
-end
-
-toggle(panel, 58, { name = "Aimbot",       value = C.Enabled })
-toggle(panel, 104, { name = "Segurar R2",  value = C.HoldAim })
-
--- FOV slider
-local function slider(parent, y)
-  local row = inst(parent, "Frame", { Size = UDim2.new(1,0,0,56), Position = UDim2.new(0,0,0,y), BackgroundTransparency = 1 })
-  local lbl = inst(row, "TextLabel", { Size = UDim2.new(1,0,0,18), Position = UDim2.new(0,0,0,4),
-    Text = "FOV  •  "..tostring(C.FOV), Font = Enum.Font.GothamIntermediate, TextColor = T.Dim, BackgroundTransparency = 1 })
-  local bg = inst(row, "Frame", { Size = UDim2.new(1,0,0,8), Position = UDim2.new(0,0,0,30), BackgroundColor = T.Box })
-  inst(bg, "UICorner", { CornerRadius = UDim2.new(0,4) })
-  local fill = inst(bg, "Frame", { Size = UDim2.new(0,0,1,0), BackgroundColor = T.Accent })
-  inst(fill, "UICorner", { CornerRadius = UDim2.new(0,4) })
-  local knob = inst(bg, "Frame", { Size = UDim2.new(0,14,0,14), Position = UDim2.new(0,-7,0,-3), BackgroundColor = T.Text })
-  inst(knob, "UICorner", { CornerRadius = UDim2.new(0,7) })
-
-  local min,max = 20, 400
-  local function apply(px)
-    local _, w = bg.AbsolutePosition.X, bg.AbsoluteSize.X
-    local rel = math.clamp((px - bg.AbsolutePosition.X)/w, 0, 1)
-    C.FOV = math.floor(min + rel*(max-min))
-    lbl.Text = "FOV  •  "..tostring(C.FOV)
-    fill.Size = UDim2.new(rel,0,1,0)
-    knob.Position = UDim2.new(rel, -7, 0, -3)
-  end
-  RunService.Stepped:Connect(function()
-    if UserInput:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then apply(UserInput.MousePosition.X) end
-  end)
-end
-slider(panel, 150)
-
--- Lock mode buttons
-local modes = { "Nearest", "Health", "Focus" }
-local mRow = inst(panel, "Frame", { Size = UDim2.new(1,0,0,26), Position = UDim2.new(0,0,0,238), BackgroundTransparency = 1 })
-inst(mRow, "UIListLayout", { Padding = UDim2.new(0,10,0,0), HorizontalAlignment = "Center", VerticalAlignment = "Center", FillDirection = "Horizontal" })
-for _,m in pairs(modes) do
-  local b = inst(mRow, "TextButton", { Size = UDim2.new(0.30,0,0,28), Text = m, Font = Enum.Font.GothamBold,
-    TextColor = T.Text, BackgroundColor = T.Box, BorderSizePixel = 0, AutoButtonColor = false, BackgroundTransparency = 0.15 })
-  inst(b, "UICorner", { CornerRadius = UDim2.new(0,8) })
-  b.MouseButton1Connected:Connect(function()
-    C.LockMode = m
-    for _,o in pairs(mRow:GetChildren()) do
-      if o:IsA("TextButton") then
-        TweenService:Create(o, TweenInfo.new(0.15), { BackgroundColor = T.Box, BackgroundTransparency = 0.15 }):Complete()
-      end
+    if Settings.aimbot then
+        local t = findTarget()
+        local head = getHead(t)
+        if head then
+            pcall(function()
+                local cam = camera
+                camera.CFrame = CFrame.new(cam.Position, head)
+            end)
+        end
     end
-    TweenService:Create(b, TweenInfo.new(0.15), { BackgroundColor = T.Accent, BackgroundTransparency = 0 }):Complete()
-  end)
+end)
+
+-- ---------- Auto Attack ----------
+local autoConn
+local function startAutoAttack()
+    local attackKey = Enum.KeyCode.K -- tecla de ataque no blox strike (fist/katana)
+    autoConn = RunService.Stepped:Connect(function()
+        if Settings.autoAtk then
+            pcall(function() UserInputService:InjectKeyDown(attackKey); wait(0.15); UserInputService:InjectKeyUp(attackKey) end)
+        end
+    end)
 end
 
--- Info label
-inst(panel, "TextLabel", {
-  Size = UDim2.new(1,0,0,18), Position = UDim2.new(0,0,1,-8),
-  Text = "Nearest = mais próximo · Health = vida baixa · Focus = mira do mouse",
-  Font = Enum.Font.GothamSmall, TextColor = T.Dim, BackgroundTransparency = 1, TextScaled = false,
-})
+-- ---------- Speed ----------
+local speedConn
+local function startSpeed()
+    speedConn = RunService.Stepped:Connect(function()
+        if Settings.speed and Root then
+            pcall(function() Root.Velocity = Root.CFrame.LookVector * SPRINT_AMT * 20 end)
+        end
+    end)
+end
 
-print("✓ Blox Strike Aimbot carregado")
+-- ---------- Noclip ----------
+local noclipConn
+local function startNoclip()
+    noclipConn = RunService.Stepped:Connect(function()
+        if Settings.noclip and Root then
+            pcall(function() Root.CanCollide = false end)
+        end
+    end)
+end
+
+-- ---------- Botões ----------
+local function makeOption(name, def, onChange)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0.14, 0)
+    row.BackgroundTransparency = 1
+    row.Parent = Main
+    label(name, UDim2.new(0.06,0,0,0), {X=0.6,Y=0.8}, THEME.text, row)
+    local tg = toggle(def)
+    tg.Position = UDim2.new(0.74,0,0,0)
+    tg.Parent = row
+    local function set(v)
+        Settings[name] = v
+        tg[1].BackgroundColor3 = v and THEME.accent or Color3.fromRGB(55,60,75)
+        tg[1][1].Position = UDim2.new(v and 0.5 or 0,0,0,0)
+        if onChange then onChange(v) end
+    end
+    set(def)
+    local dragging = false, dragStart, startPos
+    tg.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; dragStart = i.Position; startPos = tg.Position
+        end
+    end)
+    tg.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local dx = i.Position.X - dragStart.X
+            tg.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + dx, startPos.Y.Scale, startPos.Y.Offset)
+        end
+    end)
+    tg.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    tg.MouseButton1Connect(function() set(not Settings[name]) end)
+end
+
+makeOption("aimbot",   false, function(v) if v then aimConn=RunService.RenderStepped:Connect(function() end) else end end)
+makeOption("autoAtk",  false, function(v) if v and not autoConn then startAutoAttack() elseif not v and autoConn then autoConn:Disconnect(); autoConn=nil end end)
+makeOption("speed",    false, function(v) if v and not speedConn then startSpeed() elseif not v and speedConn then speedConn:Disconnect(); speedConn=nil end end)
+makeOption("noclip",   false, function(v) if v and not noclipConn then startNoclip() elseif not v and noclipConn then noclipConn:Disconnect(); noclipConn=nil end end)
+
+-- ---------- Atalho para abrir/fechar ----------
+UserInputService.InputBegan:Connect(function(i, p)
+    if i.KeyCode == Enum.KeyCode.RIGHT and not p then
+        if Main.Visible then hide() else show() end
+    end
+end)
+
+show()
+print("[BloxStrike Hub] Carregado! Botão direito do mouse abre/fecha.")

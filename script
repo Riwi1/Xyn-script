@@ -1,7 +1,6 @@
--- language: Lua, file: xyn_bloxstrike_complete.lua
+-- language: Lua, file: xyn_bloxstrike_fps.lua
 -- ============================================================
---  XYN HUB — Blox Strike Edition (Completo)
---  Otimizado para Xeno Mobile: Aimbot no Torso, ESP sem lag.
+--  XYN HUB — Blox Strike (Aimbot FPS Fix + FOV 0-300)
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -19,7 +18,7 @@ local Config = {
     TeamCheck      = true,
     WallCheck      = true,
     ShowFOV        = true,
-    FOVSize        = 350,
+    FOVSize        = 150, -- Padrão menor, já que o slider vai até 300
     Smoothness     = 0.15, 
 }
 
@@ -236,7 +235,8 @@ local function buildUI()
     makeToggle("Wall Check", "WallCheck", 4)
     makeToggle("Mostrar FOV", "ShowFOV", 5)
     
-    makeSlider("FOV Size", 100, 1000, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
+    -- SLIDER DE 0 A 300
+    makeSlider("FOV Size", 0, 300, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
     makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
 
     toggleBtn.MouseButton1Click:Connect(function()
@@ -341,7 +341,10 @@ local function updateESP()
             
             local d = getESP(player)
             
-            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 2000 then
+            -- Checagem pesada: Tem que estar vivo, não pode ser time, não pode estar no céu (>500)
+            local isDead = not hum or hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead
+            
+            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or isDead or hrp.Position.Y > 500 then
                 d.box.Visible = false
                 d.name.Visible = false
                 d.dist.Visible = false
@@ -400,7 +403,7 @@ local function getClosestPlayer()
         local enemyHum = enemyChar:FindFirstChild("Humanoid")
         local enemyPlayer = Players:GetPlayerFromCharacter(enemyChar)
         
-        if enemyHum and enemyHum.Health > 0 and enemyPlayer and not isTeammate(enemyPlayer) then
+        if enemyHum and enemyHum.Health > 0 and enemyHum:GetState() ~= Enum.HumanoidStateType.Dead and enemyPlayer and not isTeammate(enemyPlayer) then
             local screenPos, onScreen = Camera:WorldToViewportPoint(lockedTarget.Position)
             if onScreen and screenPos.Z > 0 then
                 local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
@@ -421,7 +424,9 @@ local function getClosestPlayer()
             local hum = char:FindFirstChild("Humanoid")
             local hrp = char:FindFirstChild("HumanoidRootPart")
             
-            if not isTeammate(player) and hum and hum.Health > 0 and hrp then
+            local isDead = not hum or hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead
+            
+            if not isTeammate(player) and not isDead and hrp then
                 if Config.WallCheck and not isVisible(hrp, char) then continue end
                 
                 local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
@@ -456,11 +461,21 @@ RunService.RenderStepped:Connect(function()
     if Config.AimbotEnabled then
         local target = getClosestPlayer()
         if target then
+            -- O SEGREDO PARA O AIMBOT FUNCIONAR NO FPS:
+            -- Muda o tipo de câmera para Scriptable pra o jogo não sobrescrever a mira
+            Camera.CameraType = Enum.CameraType.Scriptable
+            
             local currentCF = Camera.CFrame
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
             local targetCF = CFrame.new(currentCF.Position, target.Position)
+            
             Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
+        else
+            -- Se não tem alvo, devolve o controle pro jogador
+            Camera.CameraType = Enum.CameraType.Custom
         end
+    else
+        Camera.CameraType = Enum.CameraType.Custom
     end
 end)
 
@@ -475,4 +490,5 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     lockedTarget = nil
+    Camera.CameraType = Enum.CameraType.Custom
 end)

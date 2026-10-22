@@ -1,681 +1,437 @@
--- language: Lua, file: xyn_hub_v8_fixed.lua, target: Roblox executor Delta (mobile)
--- Xyn Hub v8 fixed — UI simplificada, CoreGui fallback, error handling
--- by Zyon99Error
-
-local Players = game:GetService("Players")
-local RunS    = game:GetService("RunService")
-local Tween   = game:GetService("TweenService")
-local UIS     = game:GetService("UserInputService")
-local RS      = game:GetService("ReplicatedStorage")
-local LP      = Players.LocalPlayer
-
+-- language: Lua, file: aim_hub_completo.lua
 -- ============================================================
--- TABELA DE VALORES (robloxdatabase, out/2026)
+--  AIM HUB v3 — ESP + Aimbot + UI Toggle + Team Check
+--  Otimizado para Delta Executor (Mobile / Touch)
 -- ============================================================
-local EGG_VALUES = {
-    ["chicken"]=1,["dog"]=2,["bird"]=8,["owl"]=35,["raccoon"]=45,["fox"]=180,["bear"]=240,["patapim"]=1800,
-    ["frog"]=3,["duckling"]=4,["catfish"]=12,["turtle"]=60,["trulimero"]=260,["swan"]=320,["axolotl"]=2800,["leviathan"]=220000,
-    ["jerboa"]=6,["fennec"]=18,["camel"]=75,["tob"]=325,["snake"]=3600,["sand spider"]=16000,["scorpion"]=18500,["sphinx"]=280000,
-    ["chimpanzee"]=90,["toucan"]=110,["crocodile"]=420,["gorilla"]=4800,["orangutini"]=5500,["spider"]=22000,["tiger"]=28000,["king snake"]=3500000,
-    ["penguin"]=140,["walrus"]=600,["polar bear"]=7000,["sabertooth"]=35000,["mammoth"]=42000,["king mammoth"]=400000,["yeti"]=5000000,["ice dragon"]=65000000,
-    ["lava gecko"]=180,["lava frog"]=850,["flaming bull"]=9500,["lava iguana"]=11000,["chillin"]=55000,["cerberus"]=8000000,
-    ["parrotfish"]=220,["swordfish"]=1100,["shark"]=15000,["orca"]=80000,["whale shark"]=700000,["beluga"]=850000,["kraken"]=15000000,["el maja"]=130000000,
-    ["dodo"]=280,["pterodactyl"]=22000,["ankylosaurus"]=120000,["triceratops"]=1200000,["bronto"]=1500000,["trex"]=25000000,["tralaledon"]=32000000,["mosasaurus"]=180000000,
-    ["centapede"]=1500,["cosmic gecko"]=30000,["cosmic gorilla"]=180000,["la vacca"]=2200000,["cosmic skeleton"]=45000000,["cosmic dragon"]=60000000,["lunar dragon"]=250000000,["unicorn"]=1000000000,
-    ["crane"]=4000,["salamander"]=74000,["red panda"]=450000,["snowy owl"]=7500000,["koi"]=12000000,["stag"]=145000000,["kitsune"]=1800000000,
-    ["titan"]=2000000000,["gorilla king"]=880000000,["nightflame"]=3000000000,
-    ["mecha dreadscale"]=4000000000,["shattered colossus"]=3500000000,
+
+local Players           = game:GetService("Players")
+local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
+local Workspace         = workspace
+
+local Camera            = Workspace.CurrentCamera
+local LocalPlayer       = Players.LocalPlayer
+
+-- ----------------- Config -----------------
+local Config = {
+    ESPEnabled     = true,
+    ESPBox         = true,
+    ESPName        = true,
+    ESPSkeleton    = true,
+    AimbotEnabled  = false,
+    TeamCheck      = true,
+    FOVSize        = 120,
+    Smoothness     = 0.15,
 }
 
-local function normalize(s)
-    return s:lower():gsub("%s+", " "):gsub(" egg", ""):gsub("_", " ")
+local MAX_ESP_DISTANCE = 1000
+
+-- ----------------- Helpers -----------------
+local function makeDrawing(className, props)
+    local d = Drawing.new(className)
+    for k, v in pairs(props or {}) do d[k] = v end
+    return d
 end
 
-local function egg_value(name)
-    local n = normalize(name)
-    if EGG_VALUES[n] then return EGG_VALUES[n] end
-    local best = 0
-    for key, val in pairs(EGG_VALUES) do
-        if n:find(key, 1, true) and val > best then best = val end
-    end
-    return best
+local function distColor(dist, maxDist)
+    local t = math.clamp(dist / maxDist, 0, 1)
+    return Color3.fromHSV(0.33 * (1 - t), 1, 1)
 end
 
--- ============================================================
--- STATUS
--- ============================================================
-local STATUS = {
-    hook_metamethod = false,
-    blind_ac        = false,
-    velocity_clamp  = false,
-    walk_speed      = false,
-    auto_steal      = false,
-    esp             = false,
-    prioritize_value = true,
-    min_value       = 0,
-}
-
-local CFG = {
-    speed          = 55,
-    tween_duration = 0.18,
-    steal_range    = 80,
-    steal_delay    = 0.4,
+local SKELETON_CONNECTIONS = {
+    {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
+    {"UpperTorso", "LeftUpperArm"}, {"UpperTorso", "RightUpperArm"},
+    {"LeftUpperArm", "LeftLowerArm"}, {"RightUpperArm", "RightLowerArm"},
+    {"LeftLowerArm", "LeftHand"}, {"RightLowerArm", "RightHand"},
+    {"LowerTorso", "LeftUpperLeg"}, {"LowerTorso", "RightUpperLeg"},
+    {"LeftUpperLeg", "LeftLowerLeg"}, {"RightUpperLeg", "RightLowerLeg"},
+    {"LeftLowerLeg", "LeftFoot"}, {"RightLowerLeg", "RightFoot"}
 }
 
 -- ============================================================
--- BYPASS — CAMADA 1: __newindex spoof
+--  UI SYSTEM (MOBILE)
 -- ============================================================
-local lock_speed = CFG.speed
-local original_speed = 16
-local old_index
+local function buildUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AimHub"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui")
 
-if type(hookmetamethod) == "function" and type(newcclosure) == "function" then
-    local new_index = function(self, key, value)
-        if key == "WalkSpeed" and self:IsA("Humanoid") then
-            if checkcaller and checkcaller() then
-                return old_index(self, key, value)
-            else
-                return old_index(self, key, original_speed)
-            end
-        end
-        return old_index(self, key, value)
-    end
-    new_index = newcclosure(new_index)
-    local ok = pcall(function()
-        old_index = hookmetamethod(game, "__newindex", new_index)
-    end)
-    STATUS.hook_metamethod = ok
-end
+    -- Botão Flutuante de Toggle
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0, 45, 0, 45)
+    toggleBtn.Position = UDim2.new(0, 20, 0, 100)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 120, 240)
+    toggleBtn.Text = "≡"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.TextSize = 24
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.BorderSizePixel = 0
+    toggleBtn.Parent = screenGui
+    
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(1, 0)
+    btnCorner.Parent = toggleBtn
 
--- ============================================================
--- BYPASS — CAMADA 2: blindar anti-cheat
--- ============================================================
-if type(hookfunction) == "function" and type(getgc) == "function" and type(islclosure) == "function" then
-    local targets = {}
-    local ok_gc = pcall(function()
-        for _, fn in next, getgc() do
-            if typeof(fn) == "function" and islclosure(fn) then
-                local ok_src, src = pcall(debug.info, fn, "s")
-                if ok_src and type(src) == "string" then
-                    if src:find("ContentCatalog%.Runtime")
-                       or src:find("WalkSpeed")
-                       or src:find("AssemblyLinearVelocity") then
-                        table.insert(targets, fn)
-                    end
-                end
-            end
-        end
-    end)
-    if ok_gc then
-        local blinded = 0
-        for _, fn in ipairs(targets) do
-            local ok = pcall(function()
-                local orig = hookfunction(fn, function(a, b, c)
-                    local sample = orig and orig(a, b, c)
-                    if type(sample) == "table" and sample.WalkSpeed then
-                        sample.WalkSpeed = 100000
-                    end
-                    return sample
-                end)
-            end)
-            if ok then blinded = blinded + 1 end
-        end
-        STATUS.blind_ac = blinded > 0
-    end
-end
-
--- ============================================================
--- BYPASS — CAMADA 3: velocity clamp
--- ============================================================
-local last_pos  = Vector3.new(0, 0, 0)
-local last_time = tick()
-
-RunS.Heartbeat:Connect(function()
-    local char = LP.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local now = tick()
-    local dt  = now - last_time
-    if dt > 0.1 then
-        last_pos  = hrp.Position
-        last_time = now
-        return
-    end
-    local delta = hrp.Position - last_pos
-    local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude / dt
-    if horiz > 70 then
-        hrp.AssemblyLinearVelocity = Vector3.new(
-            hrp.AssemblyLinearVelocity.X * 0.5,
-            hrp.AssemblyLinearVelocity.Y,
-            hrp.AssemblyLinearVelocity.Z * 0.5
-        )
-    end
-    last_pos  = hrp.Position
-    last_time = now
-end)
-STATUS.velocity_clamp = true
-
--- ============================================================
--- TWEEN
--- ============================================================
-local tweening = false
-local function tween_to(pos, duration)
-    local char = LP.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local t = Tween:Create(hrp,
-        TweenInfo.new(duration or CFG.tween_duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
-        { CFrame = CFrame.new(pos) })
-    tweening = true
-    t:Play()
-    t:Completed:Wait()
-    tweening = false
-end
-
--- ============================================================
--- HELPERS
--- ============================================================
-local function find_egg_prompts(max_dist)
-    local char = LP.Character
-    if not char then return {} end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return {} end
-
-    local found = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            local parent = obj.Parent
-            if parent and parent:IsA("BasePart") then
-                local n = parent.Name:lower()
-                if n:find("egg") or n:find("nest") or n:find("pet") then
-                    local d = (parent.Position - hrp.Position).Magnitude
-                    if d <= max_dist then
-                        local val = egg_value(parent.Name)
-                        table.insert(found, {
-                            prompt = obj,
-                            part = parent,
-                            value = val,
-                            dist = d,
-                        })
-                    end
-                end
-            end
-        end
-    end
-    return found
-end
-
-local function find_egg_parts(max_dist)
-    local char = LP.Character
-    if not char then return {} end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return {} end
-
-    local found = {}
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            local n = obj.Name:lower()
-            if n:find("egg") or n:find("brainrot") then
-                local d = (obj.Position - hrp.Position).Magnitude
-                if d <= max_dist then
-                    local val = egg_value(obj.Name)
-                    table.insert(found, { part = obj, value = val, dist = d })
-                end
-            end
-        end
-    end
-    return found
-end
-
-local function best_target(max_dist)
-    local prompts = find_egg_prompts(max_dist)
-    if #prompts > 0 then
-        local filtered = {}
-        for _, e in ipairs(prompts) do
-            if e.value >= STATUS.min_value then table.insert(filtered, e) end
-        end
-        if #filtered == 0 then filtered = prompts end
-        table.sort(filtered, function(a, b) return a.value > b.value end)
-        return filtered[1]
-    end
-
-    local parts = find_egg_parts(max_dist)
-    if #parts > 0 then
-        local filtered = {}
-        for _, e in ipairs(parts) do
-            if e.value >= STATUS.min_value then table.insert(filtered, e) end
-        end
-        if #filtered == 0 then filtered = parts end
-        table.sort(filtered, function(a, b) return a.value > b.value end)
-        return filtered[1]
-    end
-    return nil
-end
-
-local function do_steal(target)
-    if not target then return end
-    if target.prompt then
-        pcall(function() fireproximityprompt(target.prompt) end)
-        return
-    end
-    if target.part then
-        local char = LP.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            pcall(function()
-                firetouchinterest(hrp, target.part, 0)
-                task.wait(0.05)
-                firetouchinterest(hrp, target.part, 1)
-            end)
-        end
-    end
-end
-
--- ============================================================
--- AUTO STEAL
--- ============================================================
-spawn(function()
-    while task.wait(CFG.steal_delay) do
-        if STATUS.auto_steal then
-            local target = best_target(CFG.steal_range)
-            if target and not tweening then
-                local char = LP.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    local part_pos = target.part and target.part.Position or hrp.Position
-                    local goal = part_pos + (part_pos - hrp.Position).Unit * -4
-                    tween_to(goal, CFG.tween_duration)
-                    task.wait(CFG.tween_duration + 0.1)
-                    do_steal(target)
-                end
-            end
-        end
-    end
-end)
-
--- ============================================================
--- ESP
--- ============================================================
-local esp_cache = {}
-spawn(function()
-    while task.wait(0.6) do
-        if STATUS.esp then
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if (obj:IsA("Model") or obj:IsA("BasePart")) and not esp_cache[obj] then
-                    local n = obj.Name:lower()
-                    if n:find("egg") or n:find("brainrot") or n:find("pet") then
-                        local val = egg_value(obj.Name)
-                        local hl = Instance.new("Highlight")
-                        if val >= 1000000 then
-                            hl.FillColor = Color3.fromRGB(255, 60, 60)
-                        elseif val >= 1000 then
-                            hl.FillColor = Color3.fromRGB(0, 230, 200)
-                        else
-                            hl.FillColor = Color3.fromRGB(80, 200, 100)
-                        end
-                        hl.OutlineColor = Color3.new(1,1,1)
-                        hl.FillTransparency = 0.65
-                        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                        hl.Parent = obj
-                        esp_cache[obj] = hl
-                    end
-                end
-            end
-        else
-            for o, h in pairs(esp_cache) do
-                if h and h.Parent then h:Destroy() end
-                esp_cache[o] = nil
-            end
-        end
-    end
-end)
-
--- ============================================================
--- VELOCIDADE
--- ============================================================
-spawn(function()
-    while task.wait(0.5) do
-        local char = LP.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then
-                pcall(function() hum.WalkSpeed = CFG.speed end)
-                STATUS.walk_speed = true
-            end
-        end
-    end
-end)
-
--- ============================================================
--- UI — simplificada, CoreGui fallback
--- ============================================================
-local function create_ui()
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "XynHub"
-    gui.ResetOnSpawn = false
-    gui.IgnoreGuiInset = true
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-    -- tenta CoreGui, se falhar usa PlayerGui
-    local ok = pcall(function() gui.Parent = game:GetService("CoreGui") end)
-    if not ok or not gui.Parent then
-        gui.Parent = LP:WaitForChild("PlayerGui")
-    end
-
-    -- botão flutuante
-    local toggle = Instance.new("TextButton")
-    toggle.Size = UDim2.new(0, 56, 0, 56)
-    toggle.Position = UDim2.new(0, 20, 0.5, -28)
-    toggle.BackgroundColor3 = Color3.fromRGB(0, 230, 200)
-    toggle.Text = "X"
-    toggle.TextColor3 = Color3.fromRGB(10, 10, 14)
-    toggle.TextSize = 24
-    toggle.Font = Enum.Font.GothamBold
-    toggle.AutoButtonColor = false
-    toggle.Parent = gui
-    local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(1, 0); tc.Parent = toggle
-
-    -- painel
-    local panel = Instance.new("Frame")
-    panel.Size = UDim2.new(0, 280, 0, 460)
-    panel.Position = UDim2.new(0, 20, 0.5, -230)
-    panel.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
-    panel.BorderSizePixel = 0
-    panel.Visible = false
-    panel.Parent = gui
-    local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(0, 14); pc.Parent = panel
-    local ps = Instance.new("UIStroke"); ps.Color = Color3.fromRGB(32, 32, 42); ps.Parent = panel
-
-    local header = Instance.new("Frame")
-    header.Size = UDim2.new(1, 0, 0, 44)
-    header.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-    header.BorderSizePixel = 0
-    header.Parent = panel
-    local hc = Instance.new("UICorner"); hc.CornerRadius = UDim.new(0, 14); hc.Parent = header
+    -- Menu Principal
+    local main = Instance.new("Frame")
+    main.Size = UDim2.new(0, 240, 0, 420) -- Aumentei um pouco pro Team Check caber
+    main.Position = UDim2.new(0.5, -120, 0.5, -210)
+    main.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Parent = screenGui
 
     local title = Instance.new("TextLabel")
-    title.Text = "Xyn Hub"
+    title.Size = UDim2.new(1, 0, 0, 35)
+    title.BackgroundColor3 = Color3.fromRGB(40, 120, 240)
+    title.Text = "  AIM HUB v3"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 15
-    title.TextColor3 = Color3.fromRGB(235, 235, 245)
-    title.BackgroundTransparency = 1
-    title.Position = UDim2.new(0, 14, 0, 8)
-    title.Size = UDim2.new(1, -60, 0, 16)
+    title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = header
-
-    local sub = Instance.new("TextLabel")
-    sub.Text = "v8 fixed"
-    sub.Font = Enum.Font.Code
-    sub.TextSize = 10
-    sub.TextColor3 = Color3.fromRGB(130, 130, 148)
-    sub.BackgroundTransparency = 1
-    sub.Position = UDim2.new(0, 14, 0, 24)
-    sub.Size = UDim2.new(1, -60, 0, 14)
-    sub.TextXAlignment = Enum.TextXAlignment.Left
-    sub.Parent = header
-
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Text = "×"
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.TextSize = 22
-    closeBtn.TextColor3 = Color3.fromRGB(130, 130, 148)
-    closeBtn.BackgroundTransparency = 1
-    closeBtn.Size = UDim2.new(0, 36, 1, 0)
-    closeBtn.Position = UDim2.new(1, -36, 0, 0)
-    closeBtn.Parent = header
+    title.Parent = main
 
     local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, -16, 1, -56)
-    scroll.Position = UDim2.new(0, 8, 0, 48)
+    scroll.Size = UDim2.new(1, -10, 1, -45)
+    scroll.Position = UDim2.new(0, 5, 0, 40)
     scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ScrollBarThickness = 3
-    scroll.ScrollBarImageColor3 = Color3.fromRGB(0, 230, 200)
-    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    scroll.Parent = panel
-    local sl = Instance.new("UIListLayout"); sl.Padding = UDim.new(0, 8); sl.Parent = scroll
-    local sp = Instance.new("UIPadding"); sp.PaddingRight = UDim.new(0, 6); sp.PaddingTop = UDim.new(0, 4); sp.Parent = scroll
+    scroll.ScrollBarThickness = 2
+    scroll.Parent = main
 
-    local function make_section(text)
-        local s = Instance.new("Frame")
-        s.Size = UDim2.new(1, 0, 0, 22)
-        s.BackgroundTransparency = 1
-        s.Parent = scroll
-        local l = Instance.new("TextLabel")
-        l.Text = string.upper(text)
-        l.Font = Enum.Font.GothamBold
-        l.TextSize = 10
-        l.TextColor3 = Color3.fromRGB(130, 130, 148)
-        l.BackgroundTransparency = 1
-        l.Size = UDim2.new(1, 0, 1, 0)
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Parent = s
-    end
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 5)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = scroll
 
-    local function make_status(label, key)
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(1, 0, 0, 28)
-        f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-        f.Parent = scroll
-        local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = f
-        local l = Instance.new("TextLabel")
-        l.Text = label
-        l.Font = Enum.Font.GothamMedium
-        l.TextSize = 12
-        l.TextColor3 = Color3.fromRGB(235, 235, 245)
-        l.BackgroundTransparency = 1
-        l.Position = UDim2.new(0, 12, 0, 0)
-        l.Size = UDim2.new(1, -60, 1, 0)
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Parent = f
-        local dot = Instance.new("Frame")
-        dot.Size = UDim2.new(0, 10, 0, 10)
-        dot.Position = UDim2.new(1, -22, 0.5, -5)
-        dot.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-        dot.Parent = f
-        local dc = Instance.new("UICorner"); dc.CornerRadius = UDim.new(1, 0); dc.Parent = dot
-        task.spawn(function()
-            while f.Parent do
-                dot.BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 140) or Color3.fromRGB(255, 80, 90)
-                task.wait(0.5)
-            end
-        end)
-    end
-
-    local function make_toggle(label, key, cb)
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(1, 0, 0, 42)
-        f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-        f.Parent = scroll
-        local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = f
-        local l = Instance.new("TextLabel")
-        l.Text = label
-        l.Font = Enum.Font.GothamMedium
-        l.TextSize = 13
-        l.TextColor3 = Color3.fromRGB(235, 235, 245)
-        l.BackgroundTransparency = 1
-        l.Position = UDim2.new(0, 12, 0, 0)
-        l.Size = UDim2.new(1, -70, 1, 0)
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Parent = f
-        local pill = Instance.new("Frame")
-        pill.Size = UDim2.new(0, 40, 0, 22)
-        pill.Position = UDim2.new(1, -52, 0.5, -11)
-        pill.BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 200) or Color3.fromRGB(40, 40, 52)
-        pill.Parent = f
-        local pc2 = Instance.new("UICorner"); pc2.CornerRadius = UDim.new(1, 0); pc2.Parent = pill
-        local ball = Instance.new("Frame")
-        ball.Size = UDim2.new(0, 18, 0, 18)
-        ball.Position = STATUS[key] and UDim2.new(1, -19, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
-        ball.BackgroundColor3 = Color3.new(1,1,1)
-        ball.Parent = pill
-        local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(1, 0); bc.Parent = ball
+    -- Toggle Factory
+    local function makeToggle(name, configKey, label, order)
         local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 38)
+        btn.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
         btn.Text = ""
-        btn.BackgroundTransparency = 1
-        btn.Size = UDim2.new(1, 0, 1, 0)
-        btn.Parent = f
+        btn.LayoutOrder = order
+        btn.Parent = scroll
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -50, 1, 0)
+        lbl.Position = UDim2.new(0, 10, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 14
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = btn
+
+        local status = Instance.new("TextLabel")
+        status.Size = UDim2.new(0, 40, 1, 0)
+        status.Position = UDim2.new(1, -45, 0, 0)
+        status.BackgroundTransparency = 1
+        status.Font = Enum.Font.GothamBold
+        status.TextSize = 14
+        status.Parent = btn
+
+        local function refresh()
+            local on = Config[configKey]
+            status.Text = on and "ON" or "OFF"
+            status.TextColor3 = on and Color3.fromRGB(80, 240, 140) or Color3.fromRGB(255, 90, 90)
+            btn.BackgroundColor3 = on and Color3.fromRGB(40, 110, 240) or Color3.fromRGB(50, 50, 58)
+        end
+
         btn.MouseButton1Click:Connect(function()
-            STATUS[key] = not STATUS[key]
-            Tween:Create(pill, TweenInfo.new(0.2), {
-                BackgroundColor3 = STATUS[key] and Color3.fromRGB(0, 230, 200) or Color3.fromRGB(40, 40, 52)
-            }):Play()
-            Tween:Create(ball, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {
-                Position = STATUS[key] and UDim2.new(1, -19, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
-            }):Play()
-            if cb then cb(STATUS[key]) end
+            Config[configKey] = not Config[configKey]
+            refresh()
         end)
+        refresh()
     end
 
-    local function make_slider(label, min, max, default, suffix, cb)
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(1, 0, 0, 50)
-        f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
-        f.Parent = scroll
-        local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 6); c.Parent = f
-        local l = Instance.new("TextLabel")
-        l.Text = label
-        l.Font = Enum.Font.GothamMedium
-        l.TextSize = 12
-        l.TextColor3 = Color3.fromRGB(235, 235, 245)
-        l.BackgroundTransparency = 1
-        l.Position = UDim2.new(0, 12, 0, 4)
-        l.Size = UDim2.new(1, -90, 0, 16)
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Parent = f
-        local valLbl = Instance.new("TextLabel")
-        valLbl.Text = tostring(default) .. (suffix or "")
-        valLbl.Font = Enum.Font.Code
-        valLbl.TextSize = 11
-        valLbl.TextColor3 = Color3.fromRGB(0, 230, 200)
-        valLbl.BackgroundTransparency = 1
-        valLbl.Position = UDim2.new(1, -80, 0, 4)
-        valLbl.Size = UDim2.new(0, 68, 0, 16)
-        valLbl.TextXAlignment = Enum.TextXAlignment.Right
-        valLbl.Parent = f
+    -- Slider Factory
+    local function makeSlider(min, max, default, label, order, callback)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 48)
+        row.BackgroundTransparency = 1
+        row.LayoutOrder = order
+        row.Parent = scroll
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 0, 20)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label .. " : " .. string.format("%.2f", default)
+        lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+        lbl.TextSize = 13
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = row
+
         local track = Instance.new("Frame")
-        track.Size = UDim2.new(1, -24, 0, 4)
-        track.Position = UDim2.new(0, 12, 0, 34)
-        track.BackgroundColor3 = Color3.fromRGB(40, 40, 52)
-        track.Parent = f
-        local tc2 = Instance.new("UICorner"); tc2.CornerRadius = UDim.new(1, 0); tc2.Parent = track
+        track.Size = UDim2.new(1, 0, 0, 16)
+        track.Position = UDim2.new(0, 0, 0, 22)
+        track.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        track.BorderSizePixel = 0
+        track.Parent = row
+
         local fill = Instance.new("Frame")
         fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-        fill.BackgroundColor3 = Color3.fromRGB(0, 230, 200)
+        fill.BackgroundColor3 = Color3.fromRGB(40, 120, 240)
         fill.Parent = track
-        local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(1, 0); fc.Parent = fill
+
         local dragging = false
-        local function setFromX(x)
-            local rel = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local val = math.floor((min + (max - min) * rel) * 100 + 0.5) / 100
+        local function update(input)
+            local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
             fill.Size = UDim2.new(rel, 0, 1, 0)
-            valLbl.Text = tostring(val) .. (suffix or "")
-            if cb then cb(val) end
+            local val = min + (max - min) * rel
+            lbl.Text = label .. " : " .. string.format("%.2f", val)
+            callback(val)
         end
-        local drag = Instance.new("TextButton")
-        drag.Text = ""
-        drag.BackgroundTransparency = 1
-        drag.Size = UDim2.new(1, 0, 0, 24)
-        drag.Position = UDim2.new(0, 0, 0, 26)
-        drag.Parent = f
-        drag.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+
+        track.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
                 dragging = true
-                setFromX(i.Position.X)
+                update(input)
             end
         end)
-        UIS.InputChanged:Connect(function(i)
-            if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-                setFromX(i.Position.X)
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+                update(input)
             end
         end)
-        UIS.InputEnded:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
                 dragging = false
             end
         end)
     end
 
-    make_section("Bypass")
-    make_status("Hook metamethod", "hook_metamethod")
-    make_status("Blind anti-cheat", "blind_ac")
-    make_status("Velocity clamp", "velocity_clamp")
-    make_status("WalkSpeed", "walk_speed")
+    -- Adicionando os controles
+    makeToggle("ESP", "ESPEnabled", "ESP Master", 1)
+    makeToggle("Box", "ESPBox", "  ESP Box", 2)
+    makeToggle("Name", "ESPName", "  ESP Name / Dist", 3)
+    makeToggle("Skel", "ESPSkeleton", "  ESP Skeleton", 4)
+    makeToggle("Aim", "AimbotEnabled", "AIMBOT", 5)
+    makeToggle("Team", "TeamCheck", "TEAM CHECK", 6)
+    
+    makeSlider(20, 400, Config.FOVSize, "FOV Size", 7, function(v) Config.FOVSize = v end)
+    makeSlider(0.02, 1, Config.Smoothness, "Aim Smoothness", 8, function(v) Config.Smoothness = v end)
 
-    make_section("Farm")
-    make_toggle("Auto Steal", "auto_steal")
-    make_toggle("Priorizar Maior Valor", "prioritize_value")
-    make_slider("Valor Mínimo ($/s)", 0, 10000000, 0, "", function(v) STATUS.min_value = v end)
-    make_toggle("ESP Ovos", "esp")
+    -- Lógica de Abrir/Fechar
+    toggleBtn.MouseButton1Click:Connect(function()
+        main.Visible = not main.Visible
+        toggleBtn.Text = main.Visible and "≡" or "X"
+        toggleBtn.BackgroundColor3 = main.Visible and Color3.fromRGB(40, 120, 240) or Color3.fromRGB(255, 60, 60)
+    end)
 
-    local aberto = false
-    local function set_panel(vis)
-        aberto = vis
-        panel.Visible = vis
-        if vis then
-            panel.Size = UDim2.new(0, 280, 0, 0)
-            Tween:Create(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, 280, 0, 460)
-            }):Play()
+    -- Draggable Toggle Button
+    local dragBtn, startBtnPos
+    toggleBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragBtn = input.Position
+            startBtnPos = toggleBtn.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragBtn and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - dragBtn
+            toggleBtn.Position = UDim2.new(startBtnPos.X.Scale, startBtnPos.X.Offset + delta.X, startBtnPos.Y.Scale, startBtnPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then dragBtn = nil end
+    end)
+
+    -- Draggable Menu Principal
+    local dragMenu, startMenuPos
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragMenu = input.Position
+            startMenuPos = main.Position
+        end
+    end)
+    title.InputChanged:Connect(function(input)
+        if dragMenu and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local delta = input.Position - dragMenu
+            main.Position = UDim2.new(startMenuPos.X.Scale, startMenuPos.X.Offset + delta.X, startMenuPos.Y.Scale, startMenuPos.Y.Offset + delta.Y)
+        end
+    end)
+    title.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then dragMenu = nil end
+    end)
+end
+
+local ui = buildUI()
+
+-- ============================================================
+--  ESP & AIMBOT
+-- ============================================================
+local espData = {}
+local fovCircle = makeDrawing("Circle", {
+    Visible = false, Thickness = 1.5, Filled = false, 
+    Color = Color3.fromRGB(255, 255, 255), Transparency = 0.5, NumSides = 32
+})
+
+local function clearEsp(player)
+    if espData[player] then
+        for _, obj in pairs(espData[player]) do
+            if typeof(obj) == "table" and obj.Remove then obj:Remove() 
+            elseif typeof(obj) == "Instance" then obj:Destroy() end
+        end
+        espData[player] = nil
+    end
+end
+
+local function ensureEsp(player)
+    if espData[player] then return end
+    local d = {}
+    if Config.ESPBox then d.box = makeDrawing("Square", { Visible = false }) end
+    if Config.ESPName then 
+        d.name = makeDrawing("Text", { Visible = false, Size = 14, Center = true, Outline = true })
+        d.dist = makeDrawing("Text", { Visible = false, Size = 12, Center = true, Outline = true, Color = Color3.fromRGB(200, 200, 200) })
+    end
+    if Config.ESPSkeleton then
+        d.skel = {}
+        for i = 1, #SKELETON_CONNECTIONS do
+            d.skel[i] = makeDrawing("Line", { Visible = false, Thickness = 1 })
         end
     end
-    toggle.MouseButton1Click:Connect(function() set_panel(not aberto) end)
-    closeBtn.MouseButton1Click:Connect(function() set_panel(false) end)
+    espData[player] = d
+end
 
-    -- drag painel
-    local dragging, drag_start, start_pos
-    header.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            drag_start = i.Position
-            start_pos = panel.Position
-        end
-    end)
-    UIS.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - drag_start
-            panel.Position = UDim2.new(start_pos.X.Scale, start_pos.X.Offset + d.X, start_pos.Y.Scale, start_pos.Y.Offset + d.Y)
-        end
-    end)
-    UIS.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
+local function updateEsp()
+    if not Config.ESPEnabled then
+        for p, _ in pairs(espData) do clearEsp(p) end
+        return
+    end
 
-    -- drag botão
-    local btn_drag, btn_start, btn_origin
-    toggle.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
-            btn_drag = true
-            btn_start = i.Position
-            btn_origin = toggle.Position
-        end
-    end)
-    UIS.InputChanged:Connect(function(i)
-        if btn_drag and (i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseMovement) then
-            local d = i.Position - btn_start
-            if d.Magnitude > 8 then
-                toggle.Position = UDim2.new(btn_origin.X.Scale, btn_origin.X.Offset + d.X, btn_origin.Y.Scale, btn_origin.Y.Offset + d.Y)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            
+            -- TEAM CHECK (ESP)
+            local isTeammate = (Config.TeamCheck and player.Team == LocalPlayer.Team)
+            
+            ensureEsp(player)
+            local d = espData[player]
+            local char = player.Character
+            local hrp = char.HumanoidRootPart
+            local head = char:FindFirstChild("Head")
+
+            local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
+
+            if isTeammate or dist > MAX_ESP_DISTANCE or not head then
+                -- Esconde tudo se for time ou longe
+                if d.box then d.box.Visible = false end
+                if d.name then d.name.Visible = false end
+                if d.dist then d.dist.Visible = false end
+                if d.skel then for _, l in pairs(d.skel) do l.Visible = false end end
+                continue
+            end
+
+            local topPos, onScreenTop = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+            local botPos, onScreenBot = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+
+            if onScreenTop and onScreenBot then
+                local height = math.abs(topPos.Y - botPos.Y)
+                local width = height * 0.6
+                
+                if d.box then
+                    d.box.Visible = Config.ESPBox
+                    d.box.Size = Vector2.new(width, height)
+                    d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
+                    d.box.Color = distColor(dist, MAX_ESP_DISTANCE)
+                end
+
+                if d.name and d.dist then
+                    d.name.Visible = Config.ESPName
+                    d.name.Text = player.Name
+                    d.name.Position = Vector2.new(topPos.X, topPos.Y - 20)
+                    d.name.Color = Color3.fromRGB(255, 255, 255)
+
+                    d.dist.Visible = Config.ESPName
+                    d.dist.Text = math.floor(dist) .. "m"
+                    d.dist.Position = Vector2.new(topPos.X, botPos.Y + 5)
+                end
+
+                if d.skel then
+                    for i, conn in ipairs(SKELETON_CONNECTIONS) do
+                        local p1 = char:FindFirstChild(conn[1])
+                        local p2 = char:FindFirstChild(conn[2])
+                        local line = d.skel[i]
+                        
+                        if p1 and p2 and Config.ESPSkeleton then
+                            local s1, on1 = Camera:WorldToViewportPoint(p1.Position)
+                            local s2, on2 = Camera:WorldToViewportPoint(p2.Position)
+                            if on1 and on2 then
+                                line.Visible = true
+                                line.From = Vector2.new(s1.X, s1.Y)
+                                line.To = Vector2.new(s2.X, s2.Y)
+                                line.Color = distColor(dist, MAX_ESP_DISTANCE)
+                            else
+                                line.Visible = false
+                            end
+                        else
+                            line.Visible = false
+                        end
+                    end
+                end
+            else
+                if d.box then d.box.Visible = false end
+                if d.name then d.name.Visible = false end
+                if d.dist then d.dist.Visible = false end
+                if d.skel then for _, l in pairs(d.skel) do l.Visible = false end end
             end
         end
-    end)
-    UIS.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
-            btn_drag = false
+    end
+end
+
+local function getClosestPlayer()
+    local closest = nil
+    local shortestDist = Config.FOVSize
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            
+            -- TEAM CHECK (AIMBOT)
+            if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
+            
+            local head = player.Character.Head
+            local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+            if onScreen then
+                local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+                if dist < shortestDist then
+                    shortestDist = dist
+                    closest = head
+                end
+            end
         end
-    end)
-
-    print("[Xyn] UI criada com sucesso")
+    end
+    return closest
 end
 
-local ok, err = pcall(create_ui)
-if not ok then
-    warn("[Xyn] erro ao criar UI: " .. tostring(err))
-end
+-- Main Loop
+RunService.RenderStepped:Connect(function()
+    updateEsp()
 
-print("[Xyn] v8 fixed carregado")
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    fovCircle.Visible = Config.AimbotEnabled
+    if Config.AimbotEnabled then
+        fovCircle.Position = center
+        fovCircle.Radius = Config.FOVSize
+    end
+
+    if Config.AimbotEnabled then
+        local target = getClosestPlayer()
+        if target then
+            local currentCF = Camera.CFrame
+            local targetCF = CFrame.new(currentCF.Position, target.Position)
+            Camera.CFrame = currentCF:Lerp(targetCF, Config.Smoothness)
+        end
+    end
+end)
+
+-- Cleanup
+LocalPlayer.CharacterAdded:Connect(function()
+    for p, _ in pairs(espData) do clearEsp(p) end
+    espData = {}
+end)
+
+print("[AIM HUB v3] Pronto.")

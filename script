@@ -1,6 +1,6 @@
--- language: Lua, file: aim_hub_completo.lua
+-- language: Lua, file: aim_hub_v4.lua
 -- ============================================================
---  AIM HUB v3 — ESP + Aimbot + UI Toggle + Team Check
+--  AIM HUB v4 — ESP + Aimbot + UI Toggle + Team Check + Wall Check
 --  Otimizado para Delta Executor (Mobile / Touch)
 -- ============================================================
 
@@ -20,6 +20,7 @@ local Config = {
     ESPSkeleton    = true,
     AimbotEnabled  = false,
     TeamCheck      = true,
+    WallCheck      = true, -- NOVO: Ignorar quem tá atrás da parede
     FOVSize        = 120,
     Smoothness     = 0.15,
 }
@@ -57,7 +58,6 @@ local function buildUI()
     screenGui.ResetOnSpawn = false
     screenGui.Parent = game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- Botão Flutuante de Toggle
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Size = UDim2.new(0, 45, 0, 45)
     toggleBtn.Position = UDim2.new(0, 20, 0, 100)
@@ -73,10 +73,9 @@ local function buildUI()
     btnCorner.CornerRadius = UDim.new(1, 0)
     btnCorner.Parent = toggleBtn
 
-    -- Menu Principal
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 240, 0, 420) -- Aumentei um pouco pro Team Check caber
-    main.Position = UDim2.new(0.5, -120, 0.5, -210)
+    main.Size = UDim2.new(0, 240, 0, 460) -- Aumentei pra caber o Wall Check
+    main.Position = UDim2.new(0.5, -120, 0.5, -230)
     main.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
     main.BorderSizePixel = 0
     main.Active = true
@@ -85,7 +84,7 @@ local function buildUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 35)
     title.BackgroundColor3 = Color3.fromRGB(40, 120, 240)
-    title.Text = "  AIM HUB v3"
+    title.Text = "  AIM HUB v4"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
@@ -104,10 +103,9 @@ local function buildUI()
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = scroll
 
-    -- Toggle Factory
     local function makeToggle(name, configKey, label, order)
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, 0, 0, 38)
+        btn.Size = UDim2.new(1, 0, 0, 36)
         btn.BackgroundColor3 = Color3.fromRGB(50, 50, 58)
         btn.Text = ""
         btn.LayoutOrder = order
@@ -120,7 +118,7 @@ local function buildUI()
         lbl.Text = label
         lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
         lbl.Font = Enum.Font.Gotham
-        lbl.TextSize = 14
+        lbl.TextSize = 13
         lbl.TextXAlignment = Enum.TextXAlignment.Left
         lbl.Parent = btn
 
@@ -129,7 +127,7 @@ local function buildUI()
         status.Position = UDim2.new(1, -45, 0, 0)
         status.BackgroundTransparency = 1
         status.Font = Enum.Font.GothamBold
-        status.TextSize = 14
+        status.TextSize = 13
         status.Parent = btn
 
         local function refresh()
@@ -146,10 +144,9 @@ local function buildUI()
         refresh()
     end
 
-    -- Slider Factory
     local function makeSlider(min, max, default, label, order, callback)
         local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, 0, 0, 48)
+        row.Size = UDim2.new(1, 0, 0, 45)
         row.BackgroundTransparency = 1
         row.LayoutOrder = order
         row.Parent = scroll
@@ -203,25 +200,23 @@ local function buildUI()
         end)
     end
 
-    -- Adicionando os controles
     makeToggle("ESP", "ESPEnabled", "ESP Master", 1)
     makeToggle("Box", "ESPBox", "  ESP Box", 2)
     makeToggle("Name", "ESPName", "  ESP Name / Dist", 3)
     makeToggle("Skel", "ESPSkeleton", "  ESP Skeleton", 4)
     makeToggle("Aim", "AimbotEnabled", "AIMBOT", 5)
     makeToggle("Team", "TeamCheck", "TEAM CHECK", 6)
+    makeToggle("Wall", "WallCheck", "WALL CHECK", 7)
     
-    makeSlider(20, 400, Config.FOVSize, "FOV Size", 7, function(v) Config.FOVSize = v end)
-    makeSlider(0.02, 1, Config.Smoothness, "Aim Smoothness", 8, function(v) Config.Smoothness = v end)
+    makeSlider(20, 400, Config.FOVSize, "FOV Size", 8, function(v) Config.FOVSize = v end)
+    makeSlider(0.02, 1, Config.Smoothness, "Aim Smoothness", 9, function(v) Config.Smoothness = v end)
 
-    -- Lógica de Abrir/Fechar
     toggleBtn.MouseButton1Click:Connect(function()
         main.Visible = not main.Visible
         toggleBtn.Text = main.Visible and "≡" or "X"
         toggleBtn.BackgroundColor3 = main.Visible and Color3.fromRGB(40, 120, 240) or Color3.fromRGB(255, 60, 60)
     end)
 
-    -- Draggable Toggle Button
     local dragBtn, startBtnPos
     toggleBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -239,7 +234,6 @@ local function buildUI()
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then dragBtn = nil end
     end)
 
-    -- Draggable Menu Principal
     local dragMenu, startMenuPos
     title.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -268,6 +262,27 @@ local fovCircle = makeDrawing("Circle", {
     Visible = false, Thickness = 1.5, Filled = false, 
     Color = Color3.fromRGB(255, 255, 255), Transparency = 0.5, NumSides = 32
 })
+
+-- Função de Raycast pra checar se tem parede
+local function isVisible(targetPart)
+    local origin = Camera.CFrame.Position
+    local direction = (targetPart.Position - origin)
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+    
+    local result = Workspace:Raycast(origin, direction, raycastParams)
+    if result then
+        -- Se o raycast bateu na própria pessoa, tá visível
+        if result.Instance:IsDescendantOf(targetPart.Parent) then
+            return true
+        end
+        -- Se bateu em outro objeto (parede, chão), tá bloqueado
+        return false
+    end
+    return true -- Se não bateu em nada, tá livre
+end
 
 local function clearEsp(player)
     if espData[player] then
@@ -304,8 +319,6 @@ local function updateEsp()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            
-            -- TEAM CHECK (ESP)
             local isTeammate = (Config.TeamCheck and player.Team == LocalPlayer.Team)
             
             ensureEsp(player)
@@ -317,7 +330,6 @@ local function updateEsp()
             local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
 
             if isTeammate or dist > MAX_ESP_DISTANCE or not head then
-                -- Esconde tudo se for time ou longe
                 if d.box then d.box.Visible = false end
                 if d.name then d.name.Visible = false end
                 if d.dist then d.dist.Visible = false end
@@ -336,7 +348,13 @@ local function updateEsp()
                     d.box.Visible = Config.ESPBox
                     d.box.Size = Vector2.new(width, height)
                     d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
-                    d.box.Color = distColor(dist, MAX_ESP_DISTANCE)
+                    
+                    -- Muda a cor se tiver atrás da parede (fica vermelho escuro, ou verde se visível)
+                    if Config.WallCheck then
+                        d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
+                    else
+                        d.box.Color = distColor(dist, MAX_ESP_DISTANCE)
+                    end
                 end
 
                 if d.name and d.dist then
@@ -389,11 +407,13 @@ local function getClosestPlayer()
 
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
-            
-            -- TEAM CHECK (AIMBOT)
             if Config.TeamCheck and player.Team == LocalPlayer.Team then continue end
             
             local head = player.Character.Head
+            
+            -- CHECAGEM DE PAREDE NO AIMBOT
+            if Config.WallCheck and not isVisible(head) then continue end
+            
             local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
             if onScreen then
                 local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
@@ -434,4 +454,4 @@ LocalPlayer.CharacterAdded:Connect(function()
     espData = {}
 end)
 
-print("[AIM HUB v3] Pronto.")
+print("[AIM HUB v4] Pronto. Wall Check ativado.")

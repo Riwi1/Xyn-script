@@ -1,7 +1,7 @@
--- language: Lua, file: xyn_bloxstrike.lua
+-- language: Lua, file: xyn_hub_xeno.lua
 -- ============================================================
---  XYN HUB — Blox Strike Edition
---  ESP via Highlight (Chams), Aimbot travado e Team Check
+--  XYN HUB — Blox Strike (Xeno Mobile Optimized)
+--  Corrigido: Lag do ESP, Aimbot Flicando e Travamento.
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -27,9 +27,6 @@ local MAX_ESP_DISTANCE = 1000
 local ACCENT_COLOR = Color3.fromRGB(138, 43, 226)
 local BG_COLOR = Color3.fromRGB(18, 18, 22)
 local ROW_COLOR = Color3.fromRGB(28, 28, 35)
-
--- Variáveis do ESP (Highlight)
-local highlights = {}
 
 -- ============================================================
 --  UI SYSTEM (Xyn Hub)
@@ -233,7 +230,7 @@ local function buildUI()
         end)
     end
 
-    makeToggle("ESP (Highlight)", "ESPEnabled", 1)
+    makeToggle("ESP (Box & Name)", "ESPEnabled", 1)
     makeToggle("Aimbot Master", "AimbotEnabled", 2)
     makeToggle("Team Check", "TeamCheck", 3)
     makeToggle("Wall Check", "WallCheck", 4)
@@ -273,7 +270,7 @@ end
 local ui = buildUI()
 
 -- ============================================================
---  ESP (Highlight API) & AIMBOT
+--  ESP (Drawing API) & AIMBOT
 -- ============================================================
 local fovCircle = Drawing.new("Circle")
 fovCircle.Visible = false
@@ -283,9 +280,10 @@ fovCircle.Color = ACCENT_COLOR
 fovCircle.Transparency = 0.5
 fovCircle.NumSides = 40
 
+local espData = {}
 local lockedTarget = nil
+local lastESPCheck = 0
 
--- Checagem de Time
 local function isTeammate(player)
     if not Config.TeamCheck then return false end
     if not player.Team then return false end
@@ -293,7 +291,6 @@ local function isTeammate(player)
     return player.Team == LocalPlayer.Team
 end
 
--- Raycast para parede
 local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
@@ -308,41 +305,84 @@ local function isVisible(targetPart)
     return true
 end
 
--- Sistema de Highlight ESP
+local function getESP(player)
+    if not espData[player] then
+        espData[player] = {
+            box = Drawing.new("Square"),
+            name = Drawing.new("Text"),
+            dist = Drawing.new("Text")
+        }
+        espData[player].box.Thickness = 1
+        espData[player].name.Size = 14
+        espData[player].name.Center = true
+        espData[player].name.Outline = true
+        espData[player].dist.Size = 12
+        espData[player].dist.Center = true
+        espData[player].dist.Outline = true
+        espData[player].dist.Color = Color3.fromRGB(200, 200, 200)
+    end
+    return espData[player]
+end
+
 local function updateESP()
+    -- THROTTLE: Limita o ESP a 30 fps pra evitar lag no Xeno Mobile
+    if tick() - lastESPCheck < 0.03 then return end
+    lastESPCheck = tick()
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local char = player.Character
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            local head = char:FindFirstChild("Head")
             
-            if Config.ESPEnabled and not isTeammate(player) and char:FindFirstChild("HumanoidRootPart") then
-                local dist = (Camera.CFrame.Position - char.HumanoidRootPart.Position).Magnitude
+            local d = getESP(player)
+            
+            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head then
+                d.box.Visible = false
+                d.name.Visible = false
+                d.dist.Visible = false
+                continue
+            end
+
+            local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
+            
+            if dist > MAX_ESP_DISTANCE then
+                d.box.Visible = false
+                d.name.Visible = false
+                d.dist.Visible = false
+                continue
+            end
+
+            local topPos, onScreenTop = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+            local botPos, onScreenBot = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+
+            if onScreenTop and onScreenBot and topPos.Z > 0 then
+                local height = math.abs(topPos.Y - botPos.Y)
+                local width = height * 0.6
                 
-                if dist < MAX_ESP_DISTANCE then
-                    if not highlights[player] then
-                        local hl = Instance.new("Highlight")
-                        hl.Name = "XynESP"
-                        hl.Parent = char
-                        highlights[player] = hl
-                    end
-                    
-                    highlights[player].Enabled = true
-                    highlights[player].DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    
-                    if Config.WallCheck then
-                        local head = char:FindFirstChild("Head")
-                        if head and isVisible(head) then
-                            highlights[player].FillColor = Color3.fromRGB(0, 255, 0)
-                        else
-                            highlights[player].FillColor = Color3.fromRGB(255, 50, 50)
-                        end
-                    else
-                        highlights[player].FillColor = Color3.fromRGB(138, 43, 226)
-                    end
+                d.box.Visible = true
+                d.box.Size = Vector2.new(width, height)
+                d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
+                
+                if Config.WallCheck then
+                    d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
                 else
-                    if highlights[player] then highlights[player].Enabled = false end
+                    local t = math.clamp(dist / MAX_ESP_DISTANCE, 0, 1)
+                    d.box.Color = Color3.fromHSV(0.33 * (1 - t), 1, 1)
                 end
+
+                d.name.Visible = true
+                d.name.Text = player.Name
+                d.name.Position = Vector2.new(topPos.X, topPos.Y - 20)
+                d.name.Color = Color3.fromRGB(255, 255, 255)
+
+                d.dist.Visible = true
+                d.dist.Text = math.floor(dist) .. "m"
+                d.dist.Position = Vector2.new(topPos.X, botPos.Y + 5)
             else
-                if highlights[player] then highlights[player].Enabled = false end
+                d.box.Visible = false
+                d.name.Visible = false
+                d.dist.Visible = false
             end
         end
     end
@@ -351,6 +391,7 @@ end
 local function getClosestPlayer()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
+    -- LÓGICA DE TARGET LOCK (Mantém o alvo travado)
     if lockedTarget and lockedTarget.Parent then
         local enemyChar = lockedTarget.Parent
         local enemyHum = enemyChar:FindFirstChild("Humanoid")
@@ -365,9 +406,10 @@ local function getClosestPlayer()
                 end
             end
         end
-        lockedTarget = nil
+        lockedTarget = nil -- Destrava se morrer, sair do FOV ou virar time
     end
 
+    -- Se não tem alvo travado, procura o mais perto
     local closest = nil
     local shortestDist = Config.FOVSize
 
@@ -411,6 +453,8 @@ RunService.RenderStepped:Connect(function()
             local targetPos = target.Position
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
             local targetCF = CFrame.new(currentCF.Position, targetPos)
+            
+            -- Correção do "flicar": Lerp suave na câmera sem quebrar a matemática
             Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
         end
     end
@@ -418,9 +462,11 @@ end)
 
 -- Limpeza
 Players.PlayerRemoving:Connect(function(player)
-    if highlights[player] then
-        highlights[player]:Destroy()
-        highlights[player] = nil
+    if espData[player] then
+        espData[player].box:Remove()
+        espData[player].name:Remove()
+        espData[player].dist:Remove()
+        espData[player] = nil
     end
 end)
 

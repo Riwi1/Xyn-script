@@ -1,7 +1,7 @@
--- language: Lua, file: xyn_hub_xeno.lua
+-- language: Lua, file: xyn_bloxstrike_complete.lua
 -- ============================================================
---  XYN HUB — Blox Strike (Xeno Mobile Optimized)
---  Corrigido: Lag do ESP, Aimbot Flicando e Travamento.
+--  XYN HUB — Blox Strike Edition (Completo)
+--  Otimizado para Xeno Mobile: Aimbot no Torso, ESP sem lag.
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -29,7 +29,7 @@ local BG_COLOR = Color3.fromRGB(18, 18, 22)
 local ROW_COLOR = Color3.fromRGB(28, 28, 35)
 
 -- ============================================================
---  UI SYSTEM (Xyn Hub)
+--  UI SYSTEM
 -- ============================================================
 local function buildUI()
     local screenGui = Instance.new("ScreenGui")
@@ -282,7 +282,6 @@ fovCircle.NumSides = 40
 
 local espData = {}
 local lockedTarget = nil
-local lastESPCheck = 0
 
 local function isTeammate(player)
     if not Config.TeamCheck then return false end
@@ -291,15 +290,23 @@ local function isTeammate(player)
     return player.Team == LocalPlayer.Team
 end
 
-local function isVisible(targetPart)
+local function isVisible(targetPart, char)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+    
+    local filterList = {LocalPlayer.Character, Camera}
+    for _, v in pairs(char:GetChildren()) do
+        if v:IsA("Accessory") or v:IsA("Tool") or v:IsA("Hat") then
+            table.insert(filterList, v)
+        end
+    end
+    raycastParams.FilterDescendantsInstances = filterList
+    
     local result = Workspace:Raycast(origin, direction, raycastParams)
     if result then
-        if result.Instance:IsDescendantOf(targetPart.Parent) then return true end
+        if result.Instance:IsDescendantOf(char) then return true end
         return false
     end
     return true
@@ -325,19 +332,16 @@ local function getESP(player)
 end
 
 local function updateESP()
-    -- THROTTLE: Limita o ESP a 30 fps pra evitar lag no Xeno Mobile
-    if tick() - lastESPCheck < 0.03 then return end
-    lastESPCheck = tick()
-
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
             local char = player.Character
             local hrp = char:FindFirstChild("HumanoidRootPart")
             local head = char:FindFirstChild("Head")
+            local hum = char:FindFirstChild("Humanoid")
             
             local d = getESP(player)
             
-            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head then
+            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 2000 then
                 d.box.Visible = false
                 d.name.Visible = false
                 d.dist.Visible = false
@@ -365,7 +369,7 @@ local function updateESP()
                 d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
                 
                 if Config.WallCheck then
-                    d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
+                    d.box.Color = isVisible(head, char) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
                 else
                     local t = math.clamp(dist / MAX_ESP_DISTANCE, 0, 1)
                     d.box.Color = Color3.fromHSV(0.33 * (1 - t), 1, 1)
@@ -391,7 +395,6 @@ end
 local function getClosestPlayer()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
-    -- LÓGICA DE TARGET LOCK (Mantém o alvo travado)
     if lockedTarget and lockedTarget.Parent then
         local enemyChar = lockedTarget.Parent
         local enemyHum = enemyChar:FindFirstChild("Humanoid")
@@ -406,26 +409,28 @@ local function getClosestPlayer()
                 end
             end
         end
-        lockedTarget = nil -- Destrava se morrer, sair do FOV ou virar time
+        lockedTarget = nil 
     end
 
-    -- Se não tem alvo travado, procura o mais perto
     local closest = nil
     local shortestDist = Config.FOVSize
 
     for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
-            if isTeammate(player) then continue end
+        if player ~= LocalPlayer and player.Character then
+            local char = player.Character
+            local hum = char:FindFirstChild("Humanoid")
+            local hrp = char:FindFirstChild("HumanoidRootPart")
             
-            local head = player.Character.Head
-            if Config.WallCheck and not isVisible(head) then continue end
-            
-            local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
-            if onScreen and screenPos.Z > 0 then
-                local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
-                if dist < shortestDist then
-                    shortestDist = dist
-                    closest = head
+            if not isTeammate(player) and hum and hum.Health > 0 and hrp then
+                if Config.WallCheck and not isVisible(hrp, char) then continue end
+                
+                local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                if onScreen and screenPos.Z > 0 then
+                    local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closest = hrp
+                    end
                 end
             end
         end
@@ -435,9 +440,11 @@ local function getClosestPlayer()
     return closest
 end
 
-RunService.RenderStepped:Connect(function()
+RunService.Heartbeat:Connect(function()
     updateESP()
+end)
 
+RunService.RenderStepped:Connect(function()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
     fovCircle.Visible = Config.AimbotEnabled and Config.ShowFOV
@@ -450,17 +457,13 @@ RunService.RenderStepped:Connect(function()
         local target = getClosestPlayer()
         if target then
             local currentCF = Camera.CFrame
-            local targetPos = target.Position
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
-            local targetCF = CFrame.new(currentCF.Position, targetPos)
-            
-            -- Correção do "flicar": Lerp suave na câmera sem quebrar a matemática
+            local targetCF = CFrame.new(currentCF.Position, target.Position)
             Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
         end
     end
 end)
 
--- Limpeza
 Players.PlayerRemoving:Connect(function(player)
     if espData[player] then
         espData[player].box:Remove()

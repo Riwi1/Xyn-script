@@ -1,7 +1,6 @@
--- language: Lua, file: xyn_xeno_ultra.lua
+-- language: Lua, file: xyn_bloxstrike_final.lua
 -- ============================================================
---  XYN HUB — Blox Strike (Xeno Ultra Fix)
---  ESP Drawing compatível, FOV 0-300, Aimbot Scriptable.
+--  XYN HUB — Blox Strike (Engine-Level Aimbot Fix)
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -17,9 +16,10 @@ local Config = {
     ESPEnabled     = false,
     AimbotEnabled  = false,
     TeamCheck      = true,
-    WallCheck      = true,
+    WallCheckESP   = true,
+    WallCheckAim   = true,  -- NOVO: Separado do ESP
     ShowFOV        = true,
-    FOVSize        = 150, -- Começa em 150 (Slider vai de 0 a 300)
+    FOVSize        = 150, 
     Smoothness     = 0.15, 
 }
 
@@ -53,8 +53,8 @@ local function buildUI()
     btnCorner.Parent = toggleBtn
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 260, 0, 360)
-    main.Position = UDim2.new(0.5, -130, 0.5, -180)
+    main.Size = UDim2.new(0, 260, 0, 400)
+    main.Position = UDim2.new(0.5, -130, 0.5, -200)
     main.BackgroundColor3 = BG_COLOR
     main.BorderSizePixel = 0
     main.Active = true
@@ -99,7 +99,7 @@ local function buildUI()
 
     local function makeToggle(label, configKey, order)
         local row = Instance.new("TextButton")
-        row.Size = UDim2.new(1, 0, 0, 40)
+        row.Size = UDim2.new(1, 0, 0, 36)
         row.BackgroundColor3 = ROW_COLOR
         row.Text = ""
         row.LayoutOrder = order
@@ -116,7 +116,7 @@ local function buildUI()
         txt.Text = label
         txt.TextColor3 = Color3.fromRGB(200, 200, 200)
         txt.Font = Enum.Font.Gotham
-        txt.TextSize = 14
+        txt.TextSize = 13
         txt.TextXAlignment = Enum.TextXAlignment.Left
         txt.Parent = row
 
@@ -164,7 +164,7 @@ local function buildUI()
 
     local function makeSlider(label, min, max, default, order, callback)
         local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, 0, 0, 45)
+        row.Size = UDim2.new(1, 0, 0, 42)
         row.BackgroundTransparency = 1
         row.LayoutOrder = order
         row.Parent = scroll
@@ -181,7 +181,7 @@ local function buildUI()
 
         local track = Instance.new("Frame")
         track.Size = UDim2.new(1, 0, 0, 6)
-        track.Position = UDim2.new(0, 0, 0, 25)
+        track.Position = UDim2.new(0, 0, 0, 22)
         track.BackgroundColor3 = ROW_COLOR
         track.BorderSizePixel = 0
         track.Parent = row
@@ -233,12 +233,12 @@ local function buildUI()
     makeToggle("ESP (Box & Name)", "ESPEnabled", 1)
     makeToggle("Aimbot Master", "AimbotEnabled", 2)
     makeToggle("Team Check", "TeamCheck", 3)
-    makeToggle("Wall Check", "WallCheck", 4)
-    makeToggle("Mostrar FOV", "ShowFOV", 5)
+    makeToggle("Wall Check (ESP)", "WallCheckESP", 4)
+    makeToggle("Wall Check (Aimbot)", "WallCheckAim", 5)
+    makeToggle("Mostrar FOV", "ShowFOV", 6)
     
-    -- SLIDER EXPLICITAMENTE DE 0 A 300
-    makeSlider("FOV Size", 0, 300, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
-    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
+    makeSlider("FOV Size", 0, 400, Config.FOVSize, 7, function(v) Config.FOVSize = v end)
+    makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 8, function(v) Config.Smoothness = v end)
 
     toggleBtn.MouseButton1Click:Connect(function()
         main.Visible = not main.Visible
@@ -271,7 +271,7 @@ end
 local ui = buildUI()
 
 -- ============================================================
---  ESP & AIMBOT (Compatibilidade Máxima Xeno)
+--  ESP & AIMBOT
 -- ============================================================
 local fovCircle = Drawing.new("Circle")
 fovCircle.Visible = false
@@ -290,8 +290,7 @@ local function isTeammate(player)
     return player.Team == LocalPlayer.Team
 end
 
--- Raycast simples e infalível
-local function isVisible(targetPart)
+local function isVisible(targetPart, checkAim)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
     local raycastParams = RaycastParams.new()
@@ -300,9 +299,7 @@ local function isVisible(targetPart)
     local result = Workspace:Raycast(origin, direction, raycastParams)
     
     if result then
-        if result.Instance:IsDescendantOf(targetPart.Parent) then
-            return true
-        end
+        if result.Instance:IsDescendantOf(targetPart.Parent) then return true end
         return false
     end
     return true
@@ -310,22 +307,16 @@ end
 
 local function getESP(player)
     if not espData[player] then
-        -- Pcall pra segurança caso o Xeno falhe em criar o Square
-        local success, box = pcall(function() return Drawing.new("Square") end)
-        local success2, name = pcall(function() return Drawing.new("Text") end)
-        local success3, dist = pcall(function() return Drawing.new("Text") end)
-        
-        if not (success and success2 and success3) then return nil end
-        
-        espData[player] = { box = box, name = name, dist = dist }
-        
+        espData[player] = {
+            box = Drawing.new("Square"),
+            name = Drawing.new("Text"),
+            dist = Drawing.new("Text")
+        }
         espData[player].box.Thickness = 1
         espData[player].box.Filled = false
-        
         espData[player].name.Size = 14
         espData[player].name.Center = true
         espData[player].name.Outline = true
-        
         espData[player].dist.Size = 12
         espData[player].dist.Center = true
         espData[player].dist.Outline = true
@@ -343,9 +334,8 @@ local function updateESP()
             local hum = char:FindFirstChild("Humanoid")
             
             local d = getESP(player)
-            if not d then continue end -- Se o Xeno não criou, pula
+            if not d then continue end
             
-            -- Checagem simples: vivo, não é time, não tá no céu.
             if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 500 then
                 d.box.Visible = false
                 d.name.Visible = false
@@ -373,8 +363,8 @@ local function updateESP()
                 d.box.Size = Vector2.new(width, height)
                 d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
                 
-                if Config.WallCheck then
-                    d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
+                if Config.WallCheckESP then
+                    d.box.Color = isVisible(head, false) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
                 else
                     local t = math.clamp(dist / MAX_ESP_DISTANCE, 0, 1)
                     d.box.Color = Color3.fromHSV(0.33 * (1 - t), 1, 1)
@@ -427,7 +417,7 @@ local function getClosestPlayer()
             local hrp = char:FindFirstChild("HumanoidRootPart")
             
             if not isTeammate(player) and hum and hum.Health > 0 and hrp then
-                if Config.WallCheck and not isVisible(hrp) then continue end
+                if Config.WallCheckAim and not isVisible(hrp, true) then continue end
                 
                 local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
                 if onScreen and screenPos.Z > 0 then
@@ -449,7 +439,11 @@ RunService.Heartbeat:Connect(function()
     updateESP()
 end)
 
-RunService.RenderStepped:Connect(function()
+-- ============================================================
+--  AIMBOT FIX (BindToRenderStep)
+-- ============================================================
+-- Colocamos a prioridade da câmera + 1 para o Aimbot rodar DEPOIS que o jogo puxar a câmera.
+RunService:BindToRenderStep("XynAimbot", Enum.RenderPriority.Camera.Value + 1, function()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
     
     fovCircle.Visible = Config.AimbotEnabled and Config.ShowFOV
@@ -461,12 +455,19 @@ RunService.RenderStepped:Connect(function()
     if Config.AimbotEnabled then
         local target = getClosestPlayer()
         if target then
-            Camera.CameraType = Enum.CameraType.Scriptable
+            -- O jogo não pode sobrescrever se a câmera estiver no modo Scriptable
+            if Camera.CameraType ~= Enum.CameraType.Scriptable then
+                Camera.CameraType = Enum.CameraType.Scriptable
+            end
+
             local currentCF = Camera.CFrame
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
             local targetCF = CFrame.new(currentCF.Position, target.Position)
+            
+            -- Puxa a mira de forma suave
             Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
         else
+            -- Se não tem alvo, libera a câmera (volta a funcionar no dedo)
             Camera.CameraType = Enum.CameraType.Custom
         end
     else
@@ -489,5 +490,3 @@ LocalPlayer.CharacterAdded:Connect(function()
     lockedTarget = nil
     Camera.CameraType = Enum.CameraType.Custom
 end)
-
-print("[Xyn Hub] Script carregado com sucesso! Verifique o menu na tela.")

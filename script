@@ -1,6 +1,6 @@
--- language: Lua, file: xyn_hub_hardfix.lua
+-- language: Lua, file: xyn_hub_final.lua
 -- ============================================================
---  XYN HUB — Blox Strike (Hardfix Xeno Mobile)
+--  XYN HUB — Blox Strike (Aimbot Forçado + ESP Clean)
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -16,10 +16,10 @@ local Config = {
     ESPEnabled     = false,
     AimbotEnabled  = false,
     TeamCheck      = true,
-    WallCheck      = true,
+    WallCheck      = false, -- DESLIGADO POR PADRÃO PRA PUXAR
     ShowFOV        = true,
     FOVSize        = 150, 
-    Smoothness     = 0.25, 
+    Smoothness     = 0.3, 
 }
 
 local ACCENT_COLOR = Color3.fromRGB(138, 43, 226)
@@ -234,7 +234,6 @@ local function buildUI()
     makeToggle("Wall Check", "WallCheck", 4)
     makeToggle("Mostrar FOV", "ShowFOV", 5)
     
-    -- Slider 0 a 300 cravado
     makeSlider("FOV Size", 0, 300, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
     makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
 
@@ -293,16 +292,11 @@ local function isVisible(targetPart)
     local direction = (targetPart.Position - origin)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera, targetPart.Parent}
     local result = Workspace:Raycast(origin, direction, raycastParams)
-    if result then
-        if result.Instance:IsDescendantOf(targetPart.Parent) then return true end
-        return false
-    end
-    return true
+    return result == nil
 end
 
--- ESP ultra simplificado pra evitar crash no Xeno
 local function updateESP()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
@@ -311,7 +305,7 @@ local function updateESP()
             local head = char:FindFirstChild("Head")
             local hum = char:FindFirstChild("Humanoid")
             
-            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 500 then
+            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 1000 then
                 if espData[player] then
                     pcall(function() espData[player].box.Visible = false end)
                     pcall(function() espData[player].name.Visible = false end)
@@ -334,7 +328,8 @@ local function updateESP()
             local d = espData[player]
             local dist = (Camera.CFrame.Position - hrp.Position).Magnitude
 
-            if dist > 1000 then
+            -- Limite de 300 metros pro ESP não pegar cara do outro lado do mapa
+            if dist > 300 then
                 pcall(function() d.box.Visible = false end)
                 pcall(function() d.name.Visible = false end)
                 continue
@@ -418,7 +413,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ============================================================
---  AIMBOT FIX (BindToRenderStep Camera + 1)
+--  AIMBOT FIX
 -- ============================================================
 RunService:BindToRenderStep("XynAimbot", 201, function()
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
@@ -432,11 +427,10 @@ RunService:BindToRenderStep("XynAimbot", 201, function()
     if Config.AimbotEnabled then
         local target = getClosestPlayer()
         if target then
-            if Camera.CameraType ~= Enum.CameraType.Scriptable then
-                Camera.CameraType = Enum.CameraType.Scriptable
-            end
+            Camera.CameraType = Enum.CameraType.Scriptable
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
-            local targetCF = CFrame.new(Camera.CFrame.Position, target.Position)
+            -- Olha diretamente para o RootPart do inimigo
+            local targetCF = CFrame.lookAt(Camera.CFrame.Position, target.Position)
             Camera.CFrame = Camera.CFrame:Lerp(targetCF, safeSmooth)
         else
             Camera.CameraType = Enum.CameraType.Custom

@@ -1,7 +1,7 @@
--- language: Lua, file: aim_hub_v4.lua
+-- language: Lua, file: aim_hub_v5.lua
 -- ============================================================
---  AIM HUB v4 — ESP + Aimbot + UI Toggle + Team Check + Wall Check
---  Otimizado para Delta Executor (Mobile / Touch)
+--  AIM HUB v5 — ESP + Aimbot + UI Toggle + Team Check + Wall Check
+--  Correção: FOV Mobile (Pixels) e Bug de mira atrás da câmera.
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -20,8 +20,9 @@ local Config = {
     ESPSkeleton    = true,
     AimbotEnabled  = false,
     TeamCheck      = true,
-    WallCheck      = true, -- NOVO: Ignorar quem tá atrás da parede
-    FOVSize        = 120,
+    WallCheck      = true,
+    ShowFOV        = true,   -- NOVO: Liga/Desliga o círculo
+    FOVSize        = 400,    -- Aumentado para caber na tela do celular
     Smoothness     = 0.15,
 }
 
@@ -74,8 +75,8 @@ local function buildUI()
     btnCorner.Parent = toggleBtn
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 240, 0, 460) -- Aumentei pra caber o Wall Check
-    main.Position = UDim2.new(0.5, -120, 0.5, -230)
+    main.Size = UDim2.new(0, 240, 0, 490)
+    main.Position = UDim2.new(0.5, -120, 0.5, -245)
     main.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
     main.BorderSizePixel = 0
     main.Active = true
@@ -84,7 +85,7 @@ local function buildUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 35)
     title.BackgroundColor3 = Color3.fromRGB(40, 120, 240)
-    title.Text = "  AIM HUB v4"
+    title.Text = "  AIM HUB v5"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
@@ -154,7 +155,7 @@ local function buildUI()
         local lbl = Instance.new("TextLabel")
         lbl.Size = UDim2.new(1, 0, 0, 20)
         lbl.BackgroundTransparency = 1
-        lbl.Text = label .. " : " .. string.format("%.2f", default)
+        lbl.Text = label .. " : " .. string.format("%.0f", default)
         lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
         lbl.TextSize = 13
         lbl.Font = Enum.Font.Gotham
@@ -178,7 +179,12 @@ local function buildUI()
             local rel = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
             fill.Size = UDim2.new(rel, 0, 1, 0)
             local val = min + (max - min) * rel
-            lbl.Text = label .. " : " .. string.format("%.2f", val)
+            -- Se o slider for de FOV, não mostrar decimais
+            if label == "FOV Size" then
+                lbl.Text = label .. " : " .. string.format("%.0f", val)
+            else
+                lbl.Text = label .. " : " .. string.format("%.2f", val)
+            end
             callback(val)
         end
 
@@ -207,9 +213,11 @@ local function buildUI()
     makeToggle("Aim", "AimbotEnabled", "AIMBOT", 5)
     makeToggle("Team", "TeamCheck", "TEAM CHECK", 6)
     makeToggle("Wall", "WallCheck", "WALL CHECK", 7)
+    makeToggle("Fov", "ShowFOV", "MOSTRAR FOV", 8)
     
-    makeSlider(20, 400, Config.FOVSize, "FOV Size", 8, function(v) Config.FOVSize = v end)
-    makeSlider(0.02, 1, Config.Smoothness, "Aim Smoothness", 9, function(v) Config.Smoothness = v end)
+    -- Slider de FOV vai de 100 a 1000 pixels
+    makeSlider(100, 1000, Config.FOVSize, "FOV Size", 9, function(v) Config.FOVSize = v end)
+    makeSlider(0.02, 1, Config.Smoothness, "Aim Smoothness", 10, function(v) Config.Smoothness = v end)
 
     toggleBtn.MouseButton1Click:Connect(function()
         main.Visible = not main.Visible
@@ -260,10 +268,9 @@ local ui = buildUI()
 local espData = {}
 local fovCircle = makeDrawing("Circle", {
     Visible = false, Thickness = 1.5, Filled = false, 
-    Color = Color3.fromRGB(255, 255, 255), Transparency = 0.5, NumSides = 32
+    Color = Color3.fromRGB(255, 255, 255), Transparency = 0.5, NumSides = 40
 })
 
--- Função de Raycast pra checar se tem parede
 local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
@@ -274,14 +281,10 @@ local function isVisible(targetPart)
     
     local result = Workspace:Raycast(origin, direction, raycastParams)
     if result then
-        -- Se o raycast bateu na própria pessoa, tá visível
-        if result.Instance:IsDescendantOf(targetPart.Parent) then
-            return true
-        end
-        -- Se bateu em outro objeto (parede, chão), tá bloqueado
+        if result.Instance:IsDescendantOf(targetPart.Parent) then return true end
         return false
     end
-    return true -- Se não bateu em nada, tá livre
+    return true
 end
 
 local function clearEsp(player)
@@ -340,7 +343,8 @@ local function updateEsp()
             local topPos, onScreenTop = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
             local botPos, onScreenBot = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
 
-            if onScreenTop and onScreenBot then
+            -- Correção 2: Z > 0 (Garante que não está atrás da câmera)
+            if onScreenTop and onScreenBot and topPos.Z > 0 then
                 local height = math.abs(topPos.Y - botPos.Y)
                 local width = height * 0.6
                 
@@ -349,7 +353,6 @@ local function updateEsp()
                     d.box.Size = Vector2.new(width, height)
                     d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
                     
-                    -- Muda a cor se tiver atrás da parede (fica vermelho escuro, ou verde se visível)
                     if Config.WallCheck then
                         d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
                     else
@@ -377,7 +380,7 @@ local function updateEsp()
                         if p1 and p2 and Config.ESPSkeleton then
                             local s1, on1 = Camera:WorldToViewportPoint(p1.Position)
                             local s2, on2 = Camera:WorldToViewportPoint(p2.Position)
-                            if on1 and on2 then
+                            if on1 and on2 and s1.Z > 0 then
                                 line.Visible = true
                                 line.From = Vector2.new(s1.X, s1.Y)
                                 line.To = Vector2.new(s2.X, s2.Y)
@@ -411,11 +414,12 @@ local function getClosestPlayer()
             
             local head = player.Character.Head
             
-            -- CHECAGEM DE PAREDE NO AIMBOT
             if Config.WallCheck and not isVisible(head) then continue end
             
             local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
-            if onScreen then
+            
+            -- Correção 2: Z > 0 (Garante que o inimigo está na frente)
+            if onScreen and screenPos.Z > 0 then
                 local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
                 if dist < shortestDist then
                     shortestDist = dist
@@ -432,8 +436,10 @@ RunService.RenderStepped:Connect(function()
     updateEsp()
 
     local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-    fovCircle.Visible = Config.AimbotEnabled
-    if Config.AimbotEnabled then
+    
+    -- Desenha o FOV apenas se o Aimbot estiver ligado E a opção Mostrar FOV estiver ON
+    fovCircle.Visible = Config.AimbotEnabled and Config.ShowFOV
+    if fovCircle.Visible then
         fovCircle.Position = center
         fovCircle.Radius = Config.FOVSize
     end
@@ -443,6 +449,7 @@ RunService.RenderStepped:Connect(function()
         if target then
             local currentCF = Camera.CFrame
             local targetCF = CFrame.new(currentCF.Position, target.Position)
+            -- O Lerp com o Smoothness cria a suavização
             Camera.CFrame = currentCF:Lerp(targetCF, Config.Smoothness)
         end
     end
@@ -454,4 +461,4 @@ LocalPlayer.CharacterAdded:Connect(function()
     espData = {}
 end)
 
-print("[AIM HUB v4] Pronto. Wall Check ativado.")
+print("[AIM HUB v5] FOV Mobile corrigido e ativado.")

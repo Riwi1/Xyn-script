@@ -1,6 +1,7 @@
--- language: Lua, file: xyn_bloxstrike_fps.lua
+-- language: Lua, file: xyn_xeno_ultra.lua
 -- ============================================================
---  XYN HUB — Blox Strike (Aimbot FPS Fix + FOV 0-300)
+--  XYN HUB — Blox Strike (Xeno Ultra Fix)
+--  ESP Drawing compatível, FOV 0-300, Aimbot Scriptable.
 -- ============================================================
 
 local Players           = game:GetService("Players")
@@ -18,7 +19,7 @@ local Config = {
     TeamCheck      = true,
     WallCheck      = true,
     ShowFOV        = true,
-    FOVSize        = 150, -- Padrão menor, já que o slider vai até 300
+    FOVSize        = 150, -- Começa em 150 (Slider vai de 0 a 300)
     Smoothness     = 0.15, 
 }
 
@@ -235,7 +236,7 @@ local function buildUI()
     makeToggle("Wall Check", "WallCheck", 4)
     makeToggle("Mostrar FOV", "ShowFOV", 5)
     
-    -- SLIDER DE 0 A 300
+    -- SLIDER EXPLICITAMENTE DE 0 A 300
     makeSlider("FOV Size", 0, 300, Config.FOVSize, 6, function(v) Config.FOVSize = v end)
     makeSlider("Smoothness", 0.02, 0.85, Config.Smoothness, 7, function(v) Config.Smoothness = v end)
 
@@ -270,7 +271,7 @@ end
 local ui = buildUI()
 
 -- ============================================================
---  ESP (Drawing API) & AIMBOT
+--  ESP & AIMBOT (Compatibilidade Máxima Xeno)
 -- ============================================================
 local fovCircle = Drawing.new("Circle")
 fovCircle.Visible = false
@@ -285,28 +286,23 @@ local lockedTarget = nil
 
 local function isTeammate(player)
     if not Config.TeamCheck then return false end
-    if not player.Team then return false end
-    if not LocalPlayer.Team then return false end
+    if not player.Team or not LocalPlayer.Team then return false end
     return player.Team == LocalPlayer.Team
 end
 
-local function isVisible(targetPart, char)
+-- Raycast simples e infalível
+local function isVisible(targetPart)
     local origin = Camera.CFrame.Position
     local direction = (targetPart.Position - origin)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-    
-    local filterList = {LocalPlayer.Character, Camera}
-    for _, v in pairs(char:GetChildren()) do
-        if v:IsA("Accessory") or v:IsA("Tool") or v:IsA("Hat") then
-            table.insert(filterList, v)
-        end
-    end
-    raycastParams.FilterDescendantsInstances = filterList
-    
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
     local result = Workspace:Raycast(origin, direction, raycastParams)
+    
     if result then
-        if result.Instance:IsDescendantOf(char) then return true end
+        if result.Instance:IsDescendantOf(targetPart.Parent) then
+            return true
+        end
         return false
     end
     return true
@@ -314,15 +310,22 @@ end
 
 local function getESP(player)
     if not espData[player] then
-        espData[player] = {
-            box = Drawing.new("Square"),
-            name = Drawing.new("Text"),
-            dist = Drawing.new("Text")
-        }
+        -- Pcall pra segurança caso o Xeno falhe em criar o Square
+        local success, box = pcall(function() return Drawing.new("Square") end)
+        local success2, name = pcall(function() return Drawing.new("Text") end)
+        local success3, dist = pcall(function() return Drawing.new("Text") end)
+        
+        if not (success and success2 and success3) then return nil end
+        
+        espData[player] = { box = box, name = name, dist = dist }
+        
         espData[player].box.Thickness = 1
+        espData[player].box.Filled = false
+        
         espData[player].name.Size = 14
         espData[player].name.Center = true
         espData[player].name.Outline = true
+        
         espData[player].dist.Size = 12
         espData[player].dist.Center = true
         espData[player].dist.Outline = true
@@ -340,11 +343,10 @@ local function updateESP()
             local hum = char:FindFirstChild("Humanoid")
             
             local d = getESP(player)
+            if not d then continue end -- Se o Xeno não criou, pula
             
-            -- Checagem pesada: Tem que estar vivo, não pode ser time, não pode estar no céu (>500)
-            local isDead = not hum or hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead
-            
-            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or isDead or hrp.Position.Y > 500 then
+            -- Checagem simples: vivo, não é time, não tá no céu.
+            if not Config.ESPEnabled or isTeammate(player) or not hrp or not head or not hum or hum.Health <= 0 or hrp.Position.Y > 500 then
                 d.box.Visible = false
                 d.name.Visible = false
                 d.dist.Visible = false
@@ -372,7 +374,7 @@ local function updateESP()
                 d.box.Position = Vector2.new(topPos.X - width/2, topPos.Y)
                 
                 if Config.WallCheck then
-                    d.box.Color = isVisible(head, char) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
+                    d.box.Color = isVisible(head) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 50, 50)
                 else
                     local t = math.clamp(dist / MAX_ESP_DISTANCE, 0, 1)
                     d.box.Color = Color3.fromHSV(0.33 * (1 - t), 1, 1)
@@ -403,7 +405,7 @@ local function getClosestPlayer()
         local enemyHum = enemyChar:FindFirstChild("Humanoid")
         local enemyPlayer = Players:GetPlayerFromCharacter(enemyChar)
         
-        if enemyHum and enemyHum.Health > 0 and enemyHum:GetState() ~= Enum.HumanoidStateType.Dead and enemyPlayer and not isTeammate(enemyPlayer) then
+        if enemyHum and enemyHum.Health > 0 and enemyPlayer and not isTeammate(enemyPlayer) then
             local screenPos, onScreen = Camera:WorldToViewportPoint(lockedTarget.Position)
             if onScreen and screenPos.Z > 0 then
                 local dist = (center - Vector2.new(screenPos.X, screenPos.Y)).Magnitude
@@ -424,10 +426,8 @@ local function getClosestPlayer()
             local hum = char:FindFirstChild("Humanoid")
             local hrp = char:FindFirstChild("HumanoidRootPart")
             
-            local isDead = not hum or hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead
-            
-            if not isTeammate(player) and not isDead and hrp then
-                if Config.WallCheck and not isVisible(hrp, char) then continue end
+            if not isTeammate(player) and hum and hum.Health > 0 and hrp then
+                if Config.WallCheck and not isVisible(hrp) then continue end
                 
                 local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
                 if onScreen and screenPos.Z > 0 then
@@ -461,17 +461,12 @@ RunService.RenderStepped:Connect(function()
     if Config.AimbotEnabled then
         local target = getClosestPlayer()
         if target then
-            -- O SEGREDO PARA O AIMBOT FUNCIONAR NO FPS:
-            -- Muda o tipo de câmera para Scriptable pra o jogo não sobrescrever a mira
             Camera.CameraType = Enum.CameraType.Scriptable
-            
             local currentCF = Camera.CFrame
             local safeSmooth = math.clamp(Config.Smoothness, 0.02, 0.85)
             local targetCF = CFrame.new(currentCF.Position, target.Position)
-            
             Camera.CFrame = currentCF:Lerp(targetCF, safeSmooth)
         else
-            -- Se não tem alvo, devolve o controle pro jogador
             Camera.CameraType = Enum.CameraType.Custom
         end
     else
@@ -481,9 +476,11 @@ end)
 
 Players.PlayerRemoving:Connect(function(player)
     if espData[player] then
-        espData[player].box:Remove()
-        espData[player].name:Remove()
-        espData[player].dist:Remove()
+        pcall(function()
+            espData[player].box:Remove()
+            espData[player].name:Remove()
+            espData[player].dist:Remove()
+        end)
         espData[player] = nil
     end
 end)
@@ -492,3 +489,5 @@ LocalPlayer.CharacterAdded:Connect(function()
     lockedTarget = nil
     Camera.CameraType = Enum.CameraType.Custom
 end)
+
+print("[Xyn Hub] Script carregado com sucesso! Verifique o menu na tela.")

@@ -1,5 +1,5 @@
 -- language: Lua, target: Roblox / Arsenal (executor)
--- *arquivo único. layout corrigido, aba Config removida.*
+-- *arquivo único. layout corrigido, aba Config removida, opções iniciam OFF.*
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -10,21 +10,21 @@ local Camera            = Workspace.CurrentCamera
 local LocalPlayer       = Players.LocalPlayer
 
 local state = {
-    esp_enabled       = true,
-    esp_box           = true,
-    esp_name          = true,
-    esp_health        = true,
-    esp_distance      = true,
-    esp_team_check    = true,
+    esp_enabled       = false,
+    esp_box           = false,
+    esp_name          = false,
+    esp_health        = false,
+    esp_distance      = false,
+    esp_team_check    = false,
     aim_enabled       = false,
     aim_key           = Enum.UserInputType.MouseButton2,
     aim_fov           = 120,
     aim_smooth        = 0.18,
     aim_part          = "Head",
-    aim_wall_check    = true,
+    aim_wall_check    = false,
     aim_prediction    = 0.16,
-    aim_visible_only  = true,
-    aim_team_check    = true,
+    aim_visible_only  = false,
+    aim_team_check    = false,
     menu_open         = true,
     accent            = Color3.fromRGB(150, 90, 255),
     bg                = Color3.fromRGB(12, 10, 16),
@@ -280,7 +280,6 @@ gui.IgnoreGuiInset = true
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
 
--- Aumentei a altura do menu para caber tudo confortavelmente
 local main = Instance.new("Frame")
 main.Size = UDim2.fromOffset(520, 380) 
 main.Position = UDim2.new(0.5, -260, 0.5, -190)
@@ -361,7 +360,6 @@ local function make_tab(name, order)
     page.Visible = false
     page.Parent = content
 
-    -- Layout automático para os itens não se sobreporem
     local layout = Instance.new("UIListLayout")
     layout.Padding = UDim.new(0, 8)
     layout.SortOrder = Enum.SortOrder.LayoutOrder

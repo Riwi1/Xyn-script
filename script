@@ -1,5 +1,5 @@
 -- language: Lua, target: Roblox / Arsenal
--- *versão simplificada e robusta. sem Drawing library, sem UIListLayout complexo.*
+-- *GUI simples. ESP com TeamCheck. Aimbot com BindToRenderStep (ignora o camera lock do jogo).*
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,17 +8,29 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
--- Configurações
 local config = {
     esp = false,
+    esp_team_check = false,
     aimbot = false,
+    aim_team_check = true,
     fov = 120,
-    aim_smooth = 0.15
+    aim_smooth = 0.2
 }
 
 local aim_held = false
 local esp_folder = Instance.new("Folder", game:GetService("CoreGui"))
 esp_folder.Name = "XynESP"
+
+local fov_circle = nil
+pcall(function()
+    fov_circle = Drawing.new("Circle")
+    fov_circle.Thickness = 1.5
+    fov_circle.Color = Color3.fromRGB(150, 90, 255)
+    fov_circle.Filled = false
+    fov_circle.NumSides = 60
+    fov_circle.Transparency = 0.8
+    fov_circle.Visible = false
+end)
 
 -- // ESP SYSTEM //
 local function apply_esp(player)
@@ -28,25 +40,19 @@ local function apply_esp(player)
     if not char then return end
 
     local head = char:FindFirstChild("Head")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not head or not hum then return end
-
-    -- Remove se já existir
-    local old = esp_folder:FindFirstChild(player.Name)
-    if old then old:Destroy() end
+    if not head then return end
 
     local esp = Instance.new("BillboardGui")
     esp.Name = player.Name
     esp.Adornee = head
     esp.Size = UDim2.new(0, 100, 0, 50)
-    esp.StudsOffset = Vector3.new(0, 1.5, 0)
+    esp.StudsOffset = Vector3.new(0, 1.2, 0)
     esp.AlwaysOnTop = true
     esp.Parent = esp_folder
 
     local box = Instance.new("Frame")
     box.Size = UDim2.new(1, 0, 1, 0)
     box.BackgroundTransparency = 1
-    box.BorderSizePixel = 0
     box.Parent = esp
     
     local stroke = Instance.new("UIStroke")
@@ -54,26 +60,29 @@ local function apply_esp(player)
     stroke.Thickness = 1
     stroke.Parent = box
 
-    local name = Instance.new("TextLabel")
-    name.Size = UDim2.new(1, 0, 0.5, 0)
-    name.Position = UDim2.new(0, 0, -0.3, 0)
-    name.BackgroundTransparency = 1
-    name.Text = player.Name
-    name.TextColor3 = Color3.fromRGB(255, 255, 255)
-    name.TextStrokeTransparency = 0
-    name.TextSize = 14
-    name.Font = Enum.Font.GothamBold
-    name.Parent = esp
+    local name_lbl = Instance.new("TextLabel")
+    name_lbl.Name = "NameLbl"
+    name_lbl.Size = UDim2.new(1, 0, 0.5, 0)
+    name_lbl.Position = UDim2.new(0, 0, -0.3, 0)
+    name_lbl.BackgroundTransparency = 1
+    name_lbl.Text = player.Name
+    name_lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    name_lbl.TextStrokeTransparency = 0
+    name_lbl.TextSize = 14
+    name_lbl.Font = Enum.Font.GothamBold
+    name_lbl.Parent = esp
 
-    local dist = Instance.new("TextLabel")
-    dist.Size = UDim2.new(1, 0, 0.5, 0)
-    dist.Position = UDim2.new(0, 0, 0.9, 0)
-    dist.BackgroundTransparency = 1
-    dist.TextColor3 = Color3.fromRGB(200, 200, 200)
-    dist.TextStrokeTransparency = 0
-    dist.TextSize = 12
-    dist.Font = Enum.Font.Gotham
-    dist.Parent = esp
+    local dist_lbl = Instance.new("TextLabel")
+    dist_lbl.Name = "DistLbl"
+    dist_lbl.Size = UDim2.new(1, 0, 0.5, 0)
+    dist_lbl.Position = UDim2.new(0, 0, 0.9, 0)
+    dist_lbl.BackgroundTransparency = 1
+    dist_lbl.Text = "0m"
+    dist_lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    dist_lbl.TextStrokeTransparency = 0
+    dist_lbl.TextSize = 12
+    dist_lbl.Font = Enum.Font.Gotham
+    dist_lbl.Parent = esp
 end
 
 local function update_esp()
@@ -86,17 +95,22 @@ local function update_esp()
 
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
+            local is_team = player.Team == LocalPlayer.Team and player.Team ~= nil
             local esp = esp_folder:FindFirstChild(player.Name)
-            if not esp then
-                apply_esp(player)
+            
+            if config.esp_team_check and is_team then
+                if esp then esp.Enabled = false end
             else
-                local root = player.Character:FindFirstChild("HumanoidRootPart")
-                local dist_lbl = esp:FindFirstChild("TextLabel", true)
-                if root and dist_lbl then
-                    -- Atualiza a distância
-                    local d = math.floor((root.Position - Camera.CFrame.Position).Magnitude)
-                    local dist_obj = esp:FindFirstChildWhichIsA("TextLabel")
-                    if dist_obj then dist_obj.Text = tostring(d) .. "m" end
+                if not esp then
+                    apply_esp(player)
+                else
+                    esp.Enabled = true
+                    local root = player.Character:FindFirstChild("HumanoidRootPart")
+                    local dist_lbl = esp:FindFirstChild("DistLbl")
+                    if root and dist_lbl then
+                        local d = math.floor((root.Position - Camera.CFrame.Position).Magnitude)
+                        dist_lbl.Text = tostring(d) .. "m"
+                    end
                 end
             end
         end
@@ -104,19 +118,20 @@ local function update_esp()
 end
 
 -- // AIMBOT SYSTEM //
-local function get_closest_player()
+local function get_closest_target()
     local closest = nil
     local shortest_dist = config.fov
     local center = Camera.ViewportSize / 2
 
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
+            local is_team = player.Team == LocalPlayer.Team and player.Team ~= nil
             local head = player.Character:FindFirstChild("Head")
             local hum = player.Character:FindFirstChildOfClass("Humanoid")
             
-            if head and hum and hum.Health > 0 then
+            if head and hum and hum.Health > 0 and not (config.aim_team_check and is_team) then
                 local screen_pos, on_screen = Camera:WorldToViewportPoint(head.Position)
-                if on_screen then
+                if on_screen and screen_pos.Z > 0 then
                     local dist = (Vector2.new(screen_pos.X, screen_pos.Y) - center).Magnitude
                     if dist < shortest_dist then
                         shortest_dist = dist
@@ -129,15 +144,54 @@ local function get_closest_player()
     return closest
 end
 
--- // GUI // //
+-- Override do Camera CFrame (Prioridade máxima para ignorar o lock do jogo)
+RunService:BindToRenderStep("XynAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+    if fov_circle then
+        if config.aimbot then
+            fov_circle.Position = Camera.ViewportSize / 2
+            fov_circle.Radius = config.fov
+            fov_circle.Visible = true
+        else
+            fov_circle.Visible = false
+        end
+    end
+
+    if config.aimbot and aim_held then
+        local target = get_closest_target()
+        if target then
+            local goal = CFrame.new(Camera.CFrame.Position, target.Position)
+            Camera.CFrame = Camera.CFrame:Lerp(goal, config.aim_smooth)
+        end
+    end
+end)
+
+-- Loop normal para o ESP
+RunService.RenderStepped:Connect(function()
+    update_esp()
+end)
+
+-- // INPUTS //
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then aim_held = true end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        if gui then gui.Enabled = not gui.Enabled end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gp)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then aim_held = false end
+end)
+
+-- // GUI //
 local gui = Instance.new("ScreenGui")
 gui.Name = "XynGUI"
 gui.ResetOnSpawn = false
 gui.Parent = game:GetService("CoreGui")
 
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 200, 0, 160)
-main.Position = UDim2.new(0.5, -100, 0.5, -80)
+main.Size = UDim2.new(0, 220, 0, 240)
+main.Position = UDim2.new(0.5, -110, 0.5, -120)
 main.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
 main.BorderSizePixel = 0
 main.Active = true
@@ -164,14 +218,13 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -30, 1, 0)
 title.Position = UDim2.new(0, 10, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "Xyn Hub Basic"
+title.Text = "Xyn Hub Basic v2"
 title.TextColor3 = Color3.fromRGB(150, 90, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
--- Close Button
 local close = Instance.new("TextButton")
 close.Size = UDim2.new(0, 30, 0, 30)
 close.Position = UDim2.new(1, -30, 0, 0)
@@ -182,19 +235,19 @@ close.Font = Enum.Font.GothamBold
 close.TextSize = 14
 close.Parent = main
 close.MouseButton1Click:Connect(function()
-    main.Visible = false
+    gui.Enabled = false
 end)
 
--- Buttons
+-- Botões
 local function create_btn(text, y_pos, callback)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.9, 0, 0, 35)
+    btn.Size = UDim2.new(0.9, 0, 0, 30)
     btn.Position = UDim2.new(0.05, 0, 0, y_pos)
     btn.BackgroundColor3 = Color3.fromRGB(30, 25, 40)
     btn.Text = text
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.Font = Enum.Font.GothamSemibold
-    btn.TextSize = 13
+    btn.TextSize = 12
     btn.Parent = main
     
     local c = Instance.new("UICorner", btn)
@@ -205,49 +258,52 @@ local function create_btn(text, y_pos, callback)
     end)
 end
 
-create_btn("ESP: OFF", 40, function(b)
+create_btn("ESP: OFF", 38, function(b)
     config.esp = not config.esp
     b.Text = "ESP: " .. (config.esp and "ON" or "OFF")
     b.BackgroundColor3 = config.esp and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
-    update_esp()
 end)
 
-create_btn("AIMBOT: OFF", 85, function(b)
+create_btn("ESP TEAM CHECK: OFF", 74, function(b)
+    config.esp_team_check = not config.esp_team_check
+    b.Text = "ESP TEAM CHECK: " .. (config.esp_team_check and "ON" or "OFF")
+    b.BackgroundColor3 = config.esp_team_check and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
+end)
+
+create_btn("AIMBOT: OFF", 110, function(b)
     config.aimbot = not config.aimbot
     b.Text = "AIMBOT: " .. (config.aimbot and "ON" or "OFF")
     b.BackgroundColor3 = config.aimbot and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
 end)
 
--- Keybind para reabrir
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        main.Visible = not main.Visible
-    end
+create_btn("AIM TEAM CHECK: ON", 146, function(b)
+    config.aim_team_check = not config.aim_team_check
+    b.Text = "AIM TEAM CHECK: " .. (config.aim_team_check and "ON" or "OFF")
+    b.BackgroundColor3 = config.aim_team_check and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
 end)
+-- Inicia o AIM TEAM CHECK roxo pois ele começa ON
+main:GetChildren()[7].BackgroundColor3 = Color3.fromRGB(100, 50, 180)
 
--- // LOOPS //
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        aim_held = true
-    end
-end)
+-- FOV Control
+local fov_lbl = Instance.new("TextLabel")
+fov_lbl.Size = UDim2.new(0, 80, 0, 30)
+fov_lbl.Position = UDim2.new(0.05, 0, 0, 182)
+fov_lbl.BackgroundColor3 = Color3.fromRGB(20, 15, 30)
+fov_lbl.Text = "FOV: 120"
+fov_lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+fov_lbl.Font = Enum.Font.GothamSemibold
+fov_lbl.TextSize = 12
+fov_lbl.Parent = main
+Instance.new("UICorner", fov_lbl).CornerRadius = UDim.new(0, 6)
 
-UserInputService.InputEnded:Connect(function(input, gp)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        aim_held = false
-    end
-end)
+create_btn("-", 182, function()
+    config.fov = math.max(20, config.fov - 10)
+    fov_lbl.Text = "FOV: " .. config.fov
+end).Position = UDim2.new(0.55, 0, 0, 182)
+main:GetChildren()[#main:GetChildren()].Size = UDim2.new(0.15, 0, 0, 30)
 
-RunService.RenderStepped:Connect(function()
-    update_esp()
-
-    if config.aimbot and aim_held then
-        local target = get_closest_player()
-        if target then
-            local goal = CFrame.new(Camera.CFrame.Position, target.Position)
-            Camera.CFrame = Camera.CFrame:Lerp(goal, config.aim_smooth)
-        end
-    end
-end)
+create_btn("+", 182, function()
+    config.fov = math.min(500, config.fov + 10)
+    fov_lbl.Text = "FOV: " .. config.fov
+end).Position = UDim2.new(0.75, 0, 0, 182)
+main:GetChildren()[#main:GetChildren()].Size = UDim2.new(0.15, 0, 0, 30)

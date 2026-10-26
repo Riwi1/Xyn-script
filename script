@@ -1,5 +1,5 @@
--- language: Lua, target: Roblox / Arsenal (Xeno executor)
--- *Mira travada no centro exato do alvo. GUI blindada e com Team Check.*
+-- language: Lua, target: Roblox / FPS (Xeno executor)
+-- *Mira no centro exato. GUI fixa com abas, Head/Body e Team Check.*
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -14,8 +14,8 @@ local config = {
     aim_enabled       = false,
     aim_fov           = 100,
     aim_smooth        = 1.0, 
-    aim_part          = "Body", -- Padrão no centro da caixa (Torso)
-    aim_prediction    = 0,      -- Padrão 0 para acertar onde está a caixa
+    aim_part          = "Body",
+    aim_prediction    = 0,
     aim_team_check    = true,
     aim_wall_check    = true,
     
@@ -37,14 +37,14 @@ local drawing_objects = {}
 local fov_circle = nil
 local main = nil
 
--- ===================== GUI SYSTEM (CRIADO PRIMEIRO) =====================
+-- ===================== GUI SYSTEM =====================
 local function corner(parent, r)
     local c = Instance.new("UICorner", parent)
     c.CornerRadius = UDim.new(0, r or 6)
 end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XynArsenal"
+gui.Name = "XynCenterHit"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 999
@@ -77,7 +77,7 @@ local title = Instance.new("TextLabel", titlebar)
 title.Size = UDim2.new(1, -100, 1, 0)
 title.Position = UDim2.fromOffset(14, 0)
 title.BackgroundTransparency = 1
-title.Text = "Xyn Arsenal • Center Hit"
+title.Text = "Xyn • Center Hit"
 title.Font = Enum.Font.GothamBold
 title.TextSize = 15
 title.TextColor3 = config.accent

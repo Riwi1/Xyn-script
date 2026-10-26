@@ -1,26 +1,134 @@
 -- language: Lua, target: Roblox / Arsenal
--- *GUI simples. ESP com TeamCheck. Aimbot com BindToRenderStep (ignora o camera lock do jogo).*
+-- *arquivo único. Aimbot com prioridade máxima e FOV real. GUI com abas.*
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 local config = {
-    esp = false,
-    esp_team_check = false,
-    aimbot = false,
-    aim_team_check = true,
-    fov = 120,
-    aim_smooth = 0.2
+    aim_enabled = false,
+    aim_team = true,
+    aim_wall = true,
+    aim_part = "Head",
+    aim_smooth = 0.25,
+    aim_fov = 120,
+    
+    esp_enabled = false,
+    esp_team = true,
+    esp_dist = true
 }
 
 local aim_held = false
 local esp_folder = Instance.new("Folder", game:GetService("CoreGui"))
-esp_folder.Name = "XynESP"
 
+-- // HELPERS //
+local function get_char(plr)
+    return plr.Character or plr.CharacterAdded:Wait()
+end
+
+local function get_team(plr)
+    return plr.Team and plr.Team.Name or "None"
+end
+
+local function has_los(char)
+    if not config.aim_wall then return true end
+    local head = char:FindFirstChild("Head")
+    if not head then return false end
+    
+    local origin = Camera.CFrame.Position
+    local dir = head.Position - origin
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.FilterDescendantsInstances = { LocalPlayer.Character }
+    
+    local res = Workspace:Raycast(origin, dir, ray)
+    if res and not res.Instance:IsDescendantOf(char) then
+        return false
+    end
+    return true
+end
+
+-- // ESP //
+local esp_cache = {}
+
+local function update_esp()
+    if not config.esp_enabled then
+        for _, obj in pairs(esp_cache) do obj.Enabled = false end
+        return
+    end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            local head = plr.Character:FindFirstChild("Head")
+            local root = plr.Character:FindFirstChild("HumanoidRootPart")
+            
+            local is_same_team = (get_team(plr) == get_team(LocalPlayer))
+            local show = hum and hum.Health > 0 and head and root
+            if config.esp_team and is_same_team then show = false end
+
+            if show then
+                local gui = esp_cache[plr]
+                if not gui or not gui.Parent then
+                    gui = Instance.new("BillboardGui")
+                    gui.Name = plr.Name
+                    gui.Adornee = head
+                    gui.Size = UDim2.new(0, 100, 0, 50)
+                    gui.StudsOffset = Vector3.new(0, 1.5, 0)
+                    gui.AlwaysOnTop = true
+                    gui.Parent = esp_folder
+                    
+                    local box = Instance.new("Frame", gui)
+                    box.Size = UDim2.new(1, 0, 1, 0)
+                    box.BackgroundTransparency = 1
+                    local stroke = Instance.new("UIStroke", box)
+                    stroke.Color = Color3.fromRGB(150, 90, 255)
+                    stroke.Thickness = 1.5
+                    
+                    local name = Instance.new("TextLabel", gui)
+                    name.Size = UDim2.new(1, 0, 0.5, 0)
+                    name.Position = UDim2.new(0, 0, -0.35, 0)
+                    name.BackgroundTransparency = 1
+                    name.Text = plr.Name
+                    name.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    name.TextStrokeTransparency = 0
+                    name.Font = Enum.Font.GothamBold
+                    name.TextSize = 14
+                    
+                    local dist = Instance.new("TextLabel", gui)
+                    dist.Name = "Dist"
+                    dist.Size = UDim2.new(1, 0, 0.5, 0)
+                    dist.Position = UDim2.new(0, 0, 0.95, 0)
+                    dist.BackgroundTransparency = 1
+                    dist.TextColor3 = Color3.fromRGB(200, 200, 200)
+                    dist.TextStrokeTransparency = 0
+                    dist.Font = Enum.Font.Gotham
+                    dist.TextSize = 12
+                    dist.Text = config.esp_dist and "0m" or ""
+                    
+                    esp_cache[plr] = gui
+                else
+                    gui.Enabled = true
+                    if config.esp_dist then
+                        local d = math.floor((root.Position - Camera.CFrame.Position).Magnitude)
+                        gui.Dist.Text = d .. "m"
+                    else
+                        gui.Dist.Text = ""
+                    end
+                end
+            elseif esp_cache[plr] then
+                esp_cache[plr].Enabled = false
+            end
+        end
+    end
+end
+
+-- // AIMBOT //
 local fov_circle = nil
 pcall(function()
     fov_circle = Drawing.new("Circle")
@@ -28,136 +136,45 @@ pcall(function()
     fov_circle.Color = Color3.fromRGB(150, 90, 255)
     fov_circle.Filled = false
     fov_circle.NumSides = 60
-    fov_circle.Transparency = 0.8
-    fov_circle.Visible = false
+    fov_circle.Transparency = 1
 end)
 
--- // ESP SYSTEM //
-local function apply_esp(player)
-    if player == LocalPlayer then return end
-    
-    local char = player.Character
-    if not char then return end
-
-    local head = char:FindFirstChild("Head")
-    if not head then return end
-
-    local esp = Instance.new("BillboardGui")
-    esp.Name = player.Name
-    esp.Adornee = head
-    esp.Size = UDim2.new(0, 100, 0, 50)
-    esp.StudsOffset = Vector3.new(0, 1.2, 0)
-    esp.AlwaysOnTop = true
-    esp.Parent = esp_folder
-
-    local box = Instance.new("Frame")
-    box.Size = UDim2.new(1, 0, 1, 0)
-    box.BackgroundTransparency = 1
-    box.Parent = esp
-    
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(150, 90, 255)
-    stroke.Thickness = 1
-    stroke.Parent = box
-
-    local name_lbl = Instance.new("TextLabel")
-    name_lbl.Name = "NameLbl"
-    name_lbl.Size = UDim2.new(1, 0, 0.5, 0)
-    name_lbl.Position = UDim2.new(0, 0, -0.3, 0)
-    name_lbl.BackgroundTransparency = 1
-    name_lbl.Text = player.Name
-    name_lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    name_lbl.TextStrokeTransparency = 0
-    name_lbl.TextSize = 14
-    name_lbl.Font = Enum.Font.GothamBold
-    name_lbl.Parent = esp
-
-    local dist_lbl = Instance.new("TextLabel")
-    dist_lbl.Name = "DistLbl"
-    dist_lbl.Size = UDim2.new(1, 0, 0.5, 0)
-    dist_lbl.Position = UDim2.new(0, 0, 0.9, 0)
-    dist_lbl.BackgroundTransparency = 1
-    dist_lbl.Text = "0m"
-    dist_lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
-    dist_lbl.TextStrokeTransparency = 0
-    dist_lbl.TextSize = 12
-    dist_lbl.Font = Enum.Font.Gotham
-    dist_lbl.Parent = esp
-end
-
-local function update_esp()
-    if not config.esp then
-        esp_folder.Parent = nil
-        return
-    else
-        esp_folder.Parent = game:GetService("CoreGui")
-    end
-
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local is_team = player.Team == LocalPlayer.Team and player.Team ~= nil
-            local esp = esp_folder:FindFirstChild(player.Name)
-            
-            if config.esp_team_check and is_team then
-                if esp then esp.Enabled = false end
-            else
-                if not esp then
-                    apply_esp(player)
-                else
-                    esp.Enabled = true
-                    local root = player.Character:FindFirstChild("HumanoidRootPart")
-                    local dist_lbl = esp:FindFirstChild("DistLbl")
-                    if root and dist_lbl then
-                        local d = math.floor((root.Position - Camera.CFrame.Position).Magnitude)
-                        dist_lbl.Text = tostring(d) .. "m"
-                    end
-                end
-            end
-        end
-    end
-end
-
--- // AIMBOT SYSTEM //
-local function get_closest_target()
-    local closest = nil
-    local shortest_dist = config.fov
+local function get_target()
     local center = Camera.ViewportSize / 2
-
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local is_team = player.Team == LocalPlayer.Team and player.Team ~= nil
-            local head = player.Character:FindFirstChild("Head")
-            local hum = player.Character:FindFirstChildOfClass("Humanoid")
-            
-            if head and hum and hum.Health > 0 and not (config.aim_team_check and is_team) then
-                local screen_pos, on_screen = Camera:WorldToViewportPoint(head.Position)
-                if on_screen and screen_pos.Z > 0 then
-                    local dist = (Vector2.new(screen_pos.X, screen_pos.Y) - center).Magnitude
-                    if dist < shortest_dist then
-                        shortest_dist = dist
-                        closest = head
+    local best, best_dist = nil, config.aim_fov
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local is_same_team = (get_team(plr) == get_team(LocalPlayer))
+            if not (config.aim_team and is_same_team) then
+                local part = plr.Character:FindFirstChild(config.aim_part)
+                if part and has_los(plr.Character) then
+                    local screen, on_screen = Camera:WorldToViewportPoint(part.Position)
+                    -- Z > 0 garante que está na frente da câmera
+                    if on_screen and screen.Z > 0 then
+                        local dist = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+                        if dist < best_dist then
+                            best_dist = dist
+                            best = part
+                        end
                     end
                 end
             end
         end
     end
-    return closest
+    return best
 end
 
--- Override do Camera CFrame (Prioridade máxima para ignorar o lock do jogo)
-RunService:BindToRenderStep("XynAimbot", Enum.RenderPriority.Camera.Value + 1, function()
+-- Prioridade máxima absoluta para vencer o camera lock do jogo
+RunService:BindToRenderStep("XynAim", Enum.RenderPriority.Last.Value, function()
     if fov_circle then
-        if config.aimbot then
-            fov_circle.Position = Camera.ViewportSize / 2
-            fov_circle.Radius = config.fov
-            fov_circle.Visible = true
-        else
-            fov_circle.Visible = false
-        end
+        fov_circle.Position = Camera.ViewportSize / 2
+        fov_circle.Radius = config.aim_fov
+        fov_circle.Visible = config.aim_enabled
     end
 
-    if config.aimbot and aim_held then
-        local target = get_closest_target()
+    if config.aim_enabled and aim_held then
+        local target = get_target()
         if target then
             local goal = CFrame.new(Camera.CFrame.Position, target.Position)
             Camera.CFrame = Camera.CFrame:Lerp(goal, config.aim_smooth)
@@ -165,17 +182,13 @@ RunService:BindToRenderStep("XynAimbot", Enum.RenderPriority.Camera.Value + 1, f
     end
 end)
 
--- Loop normal para o ESP
-RunService.RenderStepped:Connect(function()
-    update_esp()
-end)
+RunService.Heartbeat:Connect(update_esp)
 
--- // INPUTS //
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.UserInputType == Enum.UserInputType.MouseButton2 then aim_held = true end
     if input.KeyCode == Enum.KeyCode.RightShift then
-        if gui then gui.Enabled = not gui.Enabled end
+        if main then main.Visible = not main.Visible end
     end
 end)
 
@@ -183,127 +196,202 @@ UserInputService.InputEnded:Connect(function(input, gp)
     if input.UserInputType == Enum.UserInputType.MouseButton2 then aim_held = false end
 end)
 
--- // GUI //
+-- // GUI SYSTEM //
 local gui = Instance.new("ScreenGui")
-gui.Name = "XynGUI"
+gui.Name = "XynHubV3"
 gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
 gui.Parent = game:GetService("CoreGui")
 
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 220, 0, 240)
-main.Position = UDim2.new(0.5, -110, 0.5, -120)
+main.Size = UDim2.new(0, 400, 0, 280)
+main.Position = UDim2.new(0.5, -200, 0.5, -140)
 main.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
 main.BorderSizePixel = 0
 main.Active = true
 main.Draggable = true
 main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color = Color3.fromRGB(150, 90, 255)
+mainStroke.Thickness = 1.5
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = main
+local titleBar = Instance.new("Frame", main)
+titleBar.Size = UDim2.new(1, 0, 0, 35)
+titleBar.BackgroundColor3 = Color3.fromRGB(25, 20, 35)
+titleBar.Parent = main
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(150, 90, 255)
-stroke.Thickness = 1.5
-stroke.Parent = main
+local titleText = Instance.new("TextLabel", titleBar)
+titleText.Size = UDim2.new(1, -40, 1, 0)
+titleText.Position = UDim2.new(0, 12, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "Xyn Hub V3"
+titleText.TextColor3 = Color3.fromRGB(150, 90, 255)
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = 14
+titleText.TextXAlignment = Enum.TextXAlignment.Left
 
--- Header
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 30)
-header.BackgroundColor3 = Color3.fromRGB(25, 20, 35)
-header.Parent = main
-Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
+local closeBtn = Instance.new("TextButton", titleBar)
+closeBtn.Size = UDim2.new(0, 35, 0, 35)
+closeBtn.Position = UDim2.new(1, -35, 0, 0)
+closeBtn.BackgroundTransparency = 1
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.MouseButton1Click:Connect(function() main.Visible = false end)
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -30, 1, 0)
-title.Position = UDim2.new(0, 10, 0, 0)
-title.BackgroundTransparency = 1
-title.Text = "Xyn Hub Basic v2"
-title.TextColor3 = Color3.fromRGB(150, 90, 255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 14
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = header
+local tabBar = Instance.new("Frame", main)
+tabBar.Size = UDim2.new(0, 100, 1, -35)
+tabBar.Position = UDim2.new(0, 0, 0, 35)
+tabBar.BackgroundColor3 = Color3.fromRGB(20, 15, 30)
+tabBar.Parent = main
 
-local close = Instance.new("TextButton")
-close.Size = UDim2.new(0, 30, 0, 30)
-close.Position = UDim2.new(1, -30, 0, 0)
-close.BackgroundTransparency = 1
-close.Text = "X"
-close.TextColor3 = Color3.fromRGB(255, 100, 100)
-close.Font = Enum.Font.GothamBold
-close.TextSize = 14
-close.Parent = main
-close.MouseButton1Click:Connect(function()
-    gui.Enabled = false
-end)
+local content = Instance.new("Frame", main)
+content.Size = UDim2.new(1, -110, 1, -45)
+content.Position = UDim2.new(0, 105, 0, 40)
+content.BackgroundTransparency = 1
+content.Parent = main
 
--- Botões
-local function create_btn(text, y_pos, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.9, 0, 0, 30)
-    btn.Position = UDim2.new(0.05, 0, 0, y_pos)
+local pages = {}
+local tabs = {}
+
+local function create_tab(name, order)
+    local btn = Instance.new("TextButton", tabBar)
+    btn.Size = UDim2.new(1, -10, 0, 30)
+    btn.Position = UDim2.new(0, 5, 0, 5 + (order - 1) * 35)
     btn.BackgroundColor3 = Color3.fromRGB(30, 25, 40)
-    btn.Text = text
+    btn.Text = name
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.Font = Enum.Font.GothamSemibold
     btn.TextSize = 12
-    btn.Parent = main
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     
-    local c = Instance.new("UICorner", btn)
-    c.CornerRadius = UDim.new(0, 6)
+    local page = Instance.new("Frame", content)
+    page.Size = UDim2.fromScale(1, 1)
+    page.BackgroundTransparency = 1
+    page.Visible = false
+    
+    local layout = Instance.new("UIListLayout", page)
+    layout.Padding = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    
+    tabs[name] = { btn = btn, page = page }
     
     btn.MouseButton1Click:Connect(function()
-        callback(btn)
+        for _, t in pairs(tabs) do
+            t.page.Visible = false
+            t.btn.BackgroundColor3 = Color3.fromRGB(30, 25, 40)
+        end
+        page.Visible = true
+        btn.BackgroundColor3 = Color3.fromRGB(100, 50, 180)
+    end)
+    return page
+end
+
+local ui_order = 1
+
+local function add_toggle(page, text, key)
+    local holder = Instance.new("Frame", page)
+    holder.Size = UDim2.new(1, 0, 0, 32)
+    holder.BackgroundColor3 = Color3.fromRGB(25, 20, 35)
+    holder.LayoutOrder = ui_order
+    ui_order = ui_order + 1
+    Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 6)
+    
+    local lbl = Instance.new("TextLabel", holder)
+    lbl.Size = UDim2.new(1, -50, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local btn = Instance.new("TextButton", holder)
+    btn.Size = UDim2.new(0, 36, 0, 18)
+    btn.Position = UDim2.new(1, -46, 0.5, -9)
+    btn.BackgroundColor3 = config[key] and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(40, 40, 50)
+    btn.Text = ""
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
+    
+    local dot = Instance.new("Frame", btn)
+    dot.Size = UDim2.new(0, 14, 0, 14)
+    dot.Position = config[key] and UDim2.new(1, -16, 0, 2) or UDim2.new(0, 2, 0, 2)
+    dot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(0, 7)
+    
+    btn.MouseButton1Click:Connect(function()
+        config[key] = not config[key]
+        TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = config[key] and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(40, 40, 50)}):Play()
+        TweenService:Create(dot, TweenInfo.new(0.15), {Position = config[key] and UDim2.new(1, -16, 0, 2) or UDim2.new(0, 2, 0, 2)}):Play()
     end)
 end
 
-create_btn("ESP: OFF", 38, function(b)
-    config.esp = not config.esp
-    b.Text = "ESP: " .. (config.esp and "ON" or "OFF")
-    b.BackgroundColor3 = config.esp and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
-end)
+local function add_slider(page, text, key, min, max, decimals)
+    local holder = Instance.new("Frame", page)
+    holder.Size = UDim2.new(1, 0, 0, 48)
+    holder.BackgroundColor3 = Color3.fromRGB(25, 20, 35)
+    holder.LayoutOrder = ui_order
+    ui_order = ui_order + 1
+    Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 6)
+    
+    local lbl = Instance.new("TextLabel", holder)
+    lbl.Size = UDim2.new(1, -20, 0, 16)
+    lbl.Position = UDim2.new(0, 10, 0, 4)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text .. ": " .. tostring(config[key])
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local track = Instance.new("Frame", holder)
+    track.Size = UDim2.new(1, -20, 0, 4)
+    track.Position = UDim2.new(0, 10, 0, 32)
+    track.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+    
+    local fill = Instance.new("Frame", track)
+    fill.Size = UDim2.new((config[key] - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(150, 90, 255)
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    
+    local dragging = false
+    track.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = true end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local pct = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+            local val = min + pct * (max - min)
+            if decimals then val = math.floor(val * 10^decimals) / 10^decimals else val = math.floor(val) end
+            config[key] = val
+            fill.Size = UDim2.new(pct, 0, 1, 0)
+            lbl.Text = text .. ": " .. tostring(val)
+        end
+    end)
+end
 
-create_btn("ESP TEAM CHECK: OFF", 74, function(b)
-    config.esp_team_check = not config.esp_team_check
-    b.Text = "ESP TEAM CHECK: " .. (config.esp_team_check and "ON" or "OFF")
-    b.BackgroundColor3 = config.esp_team_check and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
-end)
+local aim_page = create_tab("Aimbot", 1)
+local esp_page = create_tab("ESP", 2)
 
-create_btn("AIMBOT: OFF", 110, function(b)
-    config.aimbot = not config.aimbot
-    b.Text = "AIMBOT: " .. (config.aimbot and "ON" or "OFF")
-    b.BackgroundColor3 = config.aimbot and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
-end)
+-- Aimbot UI
+add_toggle(aim_page, "Enable Aimbot (Hold RMB)", "aim_enabled")
+add_toggle(aim_page, "Team Check", "aim_team")
+add_toggle(aim_page, "Wall Check", "aim_wall")
+add_slider(aim_page, "FOV", "aim_fov", 20, 400, 0)
+add_slider(aim_page, "Smoothing", "aim_smooth", 0.05, 0.9, 2)
 
-create_btn("AIM TEAM CHECK: ON", 146, function(b)
-    config.aim_team_check = not config.aim_team_check
-    b.Text = "AIM TEAM CHECK: " .. (config.aim_team_check and "ON" or "OFF")
-    b.BackgroundColor3 = config.aim_team_check and Color3.fromRGB(100, 50, 180) or Color3.fromRGB(30, 25, 40)
-end)
--- Inicia o AIM TEAM CHECK roxo pois ele começa ON
-main:GetChildren()[7].BackgroundColor3 = Color3.fromRGB(100, 50, 180)
+-- ESP UI
+add_toggle(esp_page, "Enable ESP", "esp_enabled")
+add_toggle(esp_page, "Team Check", "esp_team")
+add_toggle(esp_page, "Show Distance", "esp_dist")
 
--- FOV Control
-local fov_lbl = Instance.new("TextLabel")
-fov_lbl.Size = UDim2.new(0, 80, 0, 30)
-fov_lbl.Position = UDim2.new(0.05, 0, 0, 182)
-fov_lbl.BackgroundColor3 = Color3.fromRGB(20, 15, 30)
-fov_lbl.Text = "FOV: 120"
-fov_lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
-fov_lbl.Font = Enum.Font.GothamSemibold
-fov_lbl.TextSize = 12
-fov_lbl.Parent = main
-Instance.new("UICorner", fov_lbl).CornerRadius = UDim.new(0, 6)
-
-create_btn("-", 182, function()
-    config.fov = math.max(20, config.fov - 10)
-    fov_lbl.Text = "FOV: " .. config.fov
-end).Position = UDim2.new(0.55, 0, 0, 182)
-main:GetChildren()[#main:GetChildren()].Size = UDim2.new(0.15, 0, 0, 30)
-
-create_btn("+", 182, function()
-    config.fov = math.min(500, config.fov + 10)
-    fov_lbl.Text = "FOV: " .. config.fov
-end).Position = UDim2.new(0.75, 0, 0, 182)
-main:GetChildren()[#main:GetChildren()].Size = UDim2.new(0.15, 0, 0, 30)
+tabs["Aimbot"].page.Visible = true
+tabs["Aimbot"].btn.BackgroundColor3 = Color3.fromRGB(100, 50, 180)

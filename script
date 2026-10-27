@@ -1,1 +1,577 @@
+--[[
+	=========================================================================
+	  AUTOMATIC AIM SCRIPT — Roblox (Luau)
+	  UI preta e branca, moderna e profissional
+	  Autor: Cyber-Tiel-Coder / Ornith-1.5-35B-A3B
+	  
+	  INSTRUÇÕES DE INSTALAÇÃO:
+	    1. Abra o Roblox Studio → StarterPlayer → StarterPlayerScripts
+	    2. Insira um LocalScript (não um Script normal)
+	    3. Cole TODO este código dentro dele
+	    4. Pressione Play e use a tecla de ativação configurada (padrão: RightShift)
+	  =========================================================================
+--]]
 
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+local Workspace         = game:GetService("Workspace")
+
+local LocalPlayer       = Players.LocalPlayer
+
+-- =========================================================================
+-- CONFIGURAÇÕES (edite aqui)
+-- =========================================================================
+local Config = {
+	-- Tecla de ativar/desativar a mira
+	ActivationKey   = Enum.KeyCode.RightShift,
+
+	-- Alvo prioritário: usa a cabeça dos jogadores como principal
+	PriorityTarget  = "Head",        -- "Head" | "Humanoid" | nil (qualquer parte)
+
+	-- Distância máxima de aquisição (em studs)
+	MaxDistance     = 500,
+
+	-- Suavidade da mira (0 = instantâneo / 1 = muito lento)
+	Smoothness      = 0.18,
+
+	-- Raio base do círculo FOV (em pixels na tela)
+	BaseFOVRadius   = 90,
+
+	-- Ajuste fino do raio via slider/box (pixels)
+	FOVRadius       = 90,
+
+	-- Cor de destaque da UI (preto & branco padrão: nil = cinza/branco automático)
+	AccentColor     = Color3.fromRGB(255, 255, 255),
+
+	-- Transparência do painel (0..1)
+	PanelTransparency = 0.85,
+
+	-- Usar apenas jogadores da equipe? (false = todos)
+	FiltersTeamOnly   = false,
+}
+
+-- =========================================================================
+-- UTILITÁRIOS
+-- =========================================================================
+local function FindHumanoidRootPart(char: Model): Part?
+	if not char then return nil end
+	return char:FindFirstChildWhichIsA("HumanoidRootPart")
+end
+
+local function FindTargetPart(char: Model): BasePart?
+	local root = FindHumanoidRootPart(char)
+	if Config.PriorityTarget == "Head" and root then
+		local head = char:FindFirstChild("Head", true) or (root and root.Parent:FindFirstChild("Head", true))
+		if head and head:IsA("BasePart") then return head end
+	end
+	return root
+end
+
+local function PartToScreen(char: Model, part: BasePart): Vector2?
+	local vp = Workspace.CurrentCamera
+	local pos = vp:WorldToScreenPoint(part.Position)
+	return Vector2.new(pos.X, pos.Y)
+end
+
+-- =========================================================================
+-- LÓGICA DA MIRA (estado principal)
+-- =========================================================================
+local AimState = {
+	Enabled   = false,
+	LockedOn  = false,
+	Target    = nil,
+	Crosshair = Vector2.zero,
+}
+
+-- Calcula o raio em pixels do FOV para um dado raio em studs,
+-- projetando a distância até o alvo no plano da tela.
+local function ComputeFOVPixels(studRadius: number): number
+	local cam = Workspace.CurrentCamera
+	local dist = cam.CFrame.Position.Y -- altura aproximada da câmera ao chão
+	-- aproximação por ângulo de campo (FOV natural da câmera)
+	local fovDeg = cam.FOV or 70
+	-- raio na tela ≈ distância * tan(halfFov) * (screenHeight / focalLen)
+	-- simplificado e estável:
+	local half = math.rad(fovDeg / 2)
+	local pxPerStud = (cam.ViewSizeY / 2) / (math.tan(half) * math.max(dist, 1))
+	return math.max(studRadius * pxPerStud, 0)
+end
+
+-- Loop de renderização: desenha o círculo FOV e procura o alvo.
+local function RenderFrame()
+	-- atualiza posição do crosshair/centro (centro da tela)
+	local cam = Workspace.CurrentCamera
+	AimState.Crosshair = cam.ImageSize / 2
+
+	if not AimState.Enabled then return end
+
+	local radiusStuds = Config.FOVRadius -- raio em studs (o slider controla o FOV em studs)
+	local radiusPx    = ComputeFOVPixels(radiusStuds)
+
+	-- atualiza o tamanho do círculo FOV na UI
+	if FOVCircle and FOVCircle.Parent then
+		FOVCircle.Size = UDim2.new(0, radiusPx * 2, 0, radiusPx * 2)
+	end
+
+	-- percorre personagens em busca do alvo mais próximo dentro do FOV
+	local bestChar, bestPart, bestDist = nil, nil, math.huge
+	for _, char in pairs(Workspace:GetChildren()) do
+		if char ~= LocalPlayer.Character and char:IsA("Model") then
+			local humanoid = char:FindFirstChildWhichIsA("Humanoid", true)
+			if humanoid and humanoid.Health > 0 then
+				local part = FindTargetPart(char)
+				if part then
+					local screen = PartToScreen(char, part)
+					if screen then
+						local d = (screen - AimState.Crosshair).Magnitude
+						-- verifica distância em studs também
+						local worldDist = (cam.CFrame.Position - part.Position).Magnitude
+						if d <= radiusPx and worldDist <= Config.MaxDistance then
+							if d < bestDist then
+								bestChar, bestPart, bestDist = char, part, d
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	AimState.LockedOn = (bestChar ~= nil)
+	AimState.Target   = bestChar
+
+	if AimState.LockedOn and bestPart then
+		local targetScreen = PartToScreen(bestChar, bestPart)
+		if targetScreen then
+			-- aplica a mira com suavidade (lerp por frame)
+			local cam = Workspace.CurrentCamera
+			local amt = math.min(Config.Smoothness, 1)
+			local newCFrame = CFrame.new(
+				cam.CFrame.Position,
+				Vector3.new(targetScreen.X, targetScreen.Y, 0) -- simplificado: aponta pro ponto na tela
+			)
+			cam.CFrame = cam.CFrame:Lerp(newCFrame, amt)
+		end
+	end
+
+	-- atualiza indicador de status
+	if StatusText and StatusText.Parent then
+		StatusText.Text = AimState.LockedOn and "BLOQUEADO" or "AGUARDANDO"
+	end
+end
+
+RunService.RenderStepped:Connect(RenderFrame)
+
+-- =========================================================================
+-- CONSTRUÇÃO DA UI (preta e branca, moderna)
+-- =========================================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name        = "AutoAimUI"
+screenGui.ResetOnSpawn  = false
+screenGui.Enabled       = true
+
+-- Container principal arrastável
+local panel = Instance.new("Frame")
+panel.Name          = "Panel"
+panel.Size          = UDim2.new(0, 300, 0, 360)
+panel.Position      = UDim2.new(0, 40, 0, 40)
+panel.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+panel.BackgroundTransparency = 0.15
+panel.BorderSizePixel = 0
+panel.ClipsDescendants = true
+panel.Parent = screenGui
+
+-- Cantos arredondados
+panelCorner = Instance.new("UICorner")
+panelCorner.CornerRadius = UDim.new(0, 14)
+panelCorner.Parent = panel
+
+-- Barra de título (handle para arrastar)
+local titleBar = Instance.new("Frame")
+titleBar.Name        = "TitleBar"
+titleBar.Size        = UDim2.new(1, 0, 0, 44)
+titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+titleBar.BackgroundTransparency = 0.1
+titleBar.Parent = panel
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 14)
+titleCorner.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name        = "TitleLabel"
+titleLabel.Size        = UDim2.new(1, -60, 0, 44)
+titleLabel.Position    = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text        = "AUTOMATIC AIM"
+titleLabel.Font        = Enum.Font.GothamBold
+titleLabel.TextColor3    = Config.AccentColor
+titleLabel.TextScaled    = true
+titleLabel.Parent      = titleBar
+
+-- Botão minimizar
+local minimizeBtn = Instance.new("TextButton")
+minimizeBtn.Name        = "MinimizeBtn"
+minimizeBtn.Size        = UDim2.new(0, 30, 0, 30)
+minimizeBtn.Position    = UDim2.new(1, -42, 0, 7)
+minimizeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+minimizeBtn.TextColor3   = Config.AccentColor
+minimizeBtn.Font         = Enum.Font.GothamBold
+minimizeBtn.Text         = "–"
+minimizeBtn.BorderSizePixel = 0
+minimizeBtn.Parent       = titleBar
+
+local minimizeCorner = Instance.new("UICorner")
+minimizeCorner.CornerRadius = UDim.new(0, 8)
+minimizeCorner.Parent = minimizeBtn
+
+-- Botão de ativação (toggle)
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name        = "ToggleBtn"
+toggleBtn.Size        = UDim2.new(0, 150, 0, 40)
+toggleBtn.Position    = UDim2.new(0, 90, 0, 56)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+toggleBtn.TextColor3   = Config.AccentColor
+toggleBtn.Font         = Enum.Font.GothamBold
+toggleBtn.Text         = "ATIVAR"
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent       = panel
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 10)
+toggleCorner.Parent = toggleBtn
+
+-- Indicador de status (ponto + texto)
+local statusDot = Instance.new("Frame")
+statusDot.Name        = "StatusDot"
+statusDot.Size        = UDim2.new(0, 12, 0, 12)
+statusDot.Position    = UDim2.new(0, 24, 0, 62)
+statusDot.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+statusDot.Parent      = panel
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 6)
+statusCorner.Parent = statusDot
+
+local StatusText = Instance.new("TextLabel")
+StatusText.Name        = "StatusText"
+StatusText.Size        = UDim2.new(0, 120, 0, 20)
+StatusText.Position    = UDim2.new(0, 42, 0, 63)
+StatusText.BackgroundTransparency = 1
+StatusText.Text        = "AGUARDANDO"
+StatusText.Font        = Enum.Font.GothamSmall
+StatusText.TextColor3    = Color3.fromRGB(180, 180, 180)
+StatusText.Parent      = panel
+
+-- Separador
+local divider = Instance.new("Frame")
+divider.Name        = "Divider"
+divider.Size        = UDim2.new(1, -24, 0, 1)
+divider.Position    = UDim2.new(0, 12, 0, 108)
+divider.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+divider.Parent       = panel
+
+-- Controles (lista de widgets)
+local controls = {}
+
+local function makeControlRow(yOffset: number, label: string): { Label: TextLabel; Value: TextLabel }
+	local row = Instance.new("Frame")
+	row.Name        = label .. "Row"
+	row.Size        = UDim2.new(1, -24, 0, 34)
+	row.Position    = UDim2.new(0, 12, 0, yOffset)
+	row.BackgroundTransparency = 1
+	row.Parent      = panel
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Name        = "Label"
+	lbl.Size        = UDim2.new(0.5, 0, 0, 20)
+	lbl.Position    = UDim2.new(0, 0, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text        = label
+	lbl.Font        = Enum.Font.GothamSmall
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextColor3   = Color3.fromRGB(200, 200, 200)
+	lbl.Parent      = row
+
+	local val = Instance.new("TextLabel")
+	val.Name        = "Value"
+	val.Size        = UDim2.new(0.5, 0, 0, 20)
+	val.Position    = UDim2.new(0.5, 0, 0, 0)
+	val.BackgroundTransparency = 1
+	val.Font        = Enum.Font.GothamSmall
+	val.TextXAlignment = Enum.TextXAlignment.Right
+	val.TextColor3   = Config.AccentColor
+	val.Parent      = row
+
+	return { Label = lbl, Value = val }
+end
+
+-- Slider genérico (preto & branco)
+local function makeSlider(row: {Value: TextLabel}, min: number, max: number, step: number, onChange: (number)->nil): Frame
+	local slider = Instance.new("Frame")
+	slider.Name        = "Slider"
+	slider.Size        = UDim2.new(1, 0, 0, 20)
+	slider.Position    = UDim2.new(0, 0, 0, 14)
+	slider.BackgroundTransparency = 1
+	slider.Parent      = row.Parent
+
+	-- trilha
+	local track = Instance.new("Frame")
+	track.Name        = "Track"
+	track.Size        = UDim2.new(1, 0, 0, 4)
+	track.Position    = UDim2.new(0, 0, 0.5, -2)
+	track.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	track.Parent      = slider
+
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(0, 2)
+	trackCorner.Parent = track
+
+	-- preenchimento (fill)
+	local fill = Instance.new("Frame")
+	fill.Name        = "Fill"
+	fill.Size        = UDim2.new(0.5, 0, 1, 0)
+	fill.Position    = UDim2.new(0, 0, 0, 0)
+	fill.BackgroundColor3 = Config.AccentColor
+	fill.Parent      = track
+
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(0, 2)
+	fillCorner.Parent = fill
+
+	-- botão do slider (thumb)
+	local thumb = Instance.new("TextButton")
+	thumb.Name        = "Thumb"
+	thumb.Size        = UDim2.new(0, 16, 0, 16)
+	thumb.Position    = UDim2.new(0.5, -8, 0.5, -8)
+	thumb.BackgroundColor3 = Config.AccentColor
+	thumb.Text        = ""
+	thumb.BorderSizePixel = 0
+	thumb.Parent      = slider
+
+	local thumbCorner = Instance.new("UICorner")
+	thumbCorner.CornerRadius = UDim.new(0, 8)
+	thumbCorner.Parent = thumb
+
+	local dragging = false
+
+	local function updateFromMouse(mousePos: Vector2)
+		local rel = math.clamp((mousePos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+		local raw = min + (max - min) * rel
+		local stepped = math.floor(raw / step + 0.5) * step
+		local rounded = math.round(stepped * 100) / 100
+		onChange(rounded)
+		updateUI(rel)
+	end
+
+	local function updateUI(rel: number)
+		fill.Size = UDim2.new(rel, 0, 1, 0)
+		thumb.Position = UDim2.new(math.clamp(rel - 0.5, -0.5, 0.5), -8, 0.5, -8)
+	end
+
+	-- inicializa
+	local initialRel = (Config.Smoothness - 0) / (1 - 0) -- slider de suavidade usa 0..1 como exemplo
+	updateUI(math.clamp(initialRel, 0, 1))
+
+	thumb.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+		end
+	end)
+	thumb.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input, gp)
+		if dragging and (input.KeyCode == nil or input.UserInputType == Enum.UserInputType.MouseMovement) then
+			updateFromMouse(gp)
+		end
+	end)
+
+	return slider
+end
+
+-- --- Slider de Suavidade ---
+local smoothRow = makeControlRow(150, "SUAVIDADE")
+makeSlider(smoothRow, 0, 1, 0.01, function(v)
+	Config.Smoothness = v
+	smoothRow.Value.Text = string.format("%.2f", v)
+end)
+
+-- --- Slider de Distância Máxima ---
+local distRow = makeControlRow(190, "DIST. MÁXIMA")
+makeSlider(distRow, 50, 2000, 10, function(v)
+	Config.MaxDistance = v
+	distRow.Value.Text = string.format("%.0f", v)
+end)
+
+-- --- Slider de Transparência do Painel ---
+local transRow = makeControlRow(230, "TRANSPARÊNCIA")
+makeSlider(transRow, 0.3, 1, 0.01, function(v)
+	Config.PanelTransparency = v
+	transRow.Value.Text = string.format("%.0f%%", v * 100)
+	panel.BackgroundTransparency = v
+end)
+
+-- --- Slider de FOV (raio em studs) ---
+local fovRow = makeControlRow(270, "FOV")
+makeSlider(fovRow, 20, 400, 1, function(v)
+	Config.FOVRadius = v
+	fovRow.Value.Text = string.format("%.0f", v)
+end)
+
+-- TextBox de FOV (valor numérico digitável)
+local fovBox = Instance.new("TextBox")
+fovBox.Name        = "FOVBox"
+fovBox.Size        = UDim2.new(0, 70, 0, 24)
+fovBox.Position    = UDim2.new(1, -96, 0, 270)
+fovBox.BackgroundTransparency = 0.6
+fovBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+fovBox.Text         = tostring(Config.FOVRadius)
+fovBox.Font         = Enum.Font.GothamSmall
+fovBox.TextColor3   = Config.AccentColor
+fovBox.PlaceholderText = "FOV"
+fovBox.PlaceholderText3 = Color3.fromRGB(120, 120, 120)
+fovBox.BorderSizePixel = 0
+fovBox.Parent       = panel
+
+local fovBoxCorner = Instance.new("UICorner")
+fovBoxCorner.CornerRadius = UDim.new(0, 6)
+fovBoxCorner.Parent = fovBox
+
+fovBox.FocusLost:Connect(function()
+	local ok, num = pcall(tonumber, fovBox.Text)
+	if ok and num then
+		num = math.clamp(math.floor(num), 20, 400)
+		Config.FOVRadius = num
+		fovBox.Text = tostring(num)
+		fovRow.Value.Text = string.format("%.0f", num)
+	else
+		fovBox.Text = tostring(Config.FOVRadius)
+	end
+end)
+
+-- Círculo FOV centralizado na tela (overlay)
+local fovOverlay = Instance.new("Frame")
+fovOverlay.Name        = "FOVCircle"
+fovOverlay.Size        = UDim2.new(0, Config.FOVRadius * 2, 0, Config.FOVRadius * 2)
+fovOverlay.Position    = UDim2.new(0.5, 0, 0.5, 0)
+fovOverlay.AnchorPoint   = Vector2.new(0.5, 0.5)
+fovOverlay.BackgroundColor3 = Config.AccentColor
+fovOverlay.BackgroundTransparency = 0.98
+fovOverlay.BorderSizePixel = 0
+fovOverlay.Parent      = screenGui
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(0, 500) -- círculo perfeito
+fovCorner.Parent = fovOverlay
+
+-- anel fino em volta do círculo (destaque)
+local fovRing = Instance.new("Frame")
+fovRing.Name        = "FOVRing"
+fovRing.Size        = UDim2.new(1, 4, 1, 4)
+fovRing.Position    = UDim2.new(0, -2, 0, -2)
+fovRing.BackgroundTransparency = 1
+fovRing.Parent      = fovOverlay
+
+local ringBorder = Instance.new("UIStroke")
+ringBorder.Color = Config.AccentColor
+ringBorder.Thickness = 1.5
+ringBorder.Transparency = 0.4
+ringBorder.Parent = fovRing
+
+-- =========================================================================
+-- CONTROLES FUNCIONAIS
+-- =========================================================================
+
+-- Toggle (ativar/desativar) com animação de cor
+local function setToggle(on: boolean)
+	AimState.Enabled = on
+	local targetColor = on and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(20, 20, 20)
+	local targetText  = on and "DESATIVAR" or "ATIVAR"
+
+	TweenService:Create(toggleBtn, TweenInfo.new(0.25), {
+		BackgroundColor3 = targetColor,
+		TextColor3       = on and Color3.fromRGB(0, 0, 0) or Config.AccentColor,
+	})
+	task.delay(0.01, function() toggleBtn.Text = targetText end)
+
+	-- atualiza ponto de status
+	statusDot.BackgroundColor3 = on and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(120, 120, 120)
+	StatusText.Text = "AGUARDANDO"
+end
+
+toggleBtn.MouseButtonClicked:Connect(function()
+	setToggle(not AimState.Enabled)
+end)
+
+-- Ativação por tecla configurável
+UserInputService.InputBegan:Connect(function(input, processChat)
+	if input.KeyCode == Config.ActivationKey and not processChat then
+		setToggle(not AimState.Enabled)
+	end
+end)
+
+-- --- Painel arrastável ---
+local draggingUI = false
+local dragStart, startPos
+
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		draggingUI = true
+		dragStart  = input.Position
+		startPos   = panel.Position
+	end
+end)
+titleBar.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		draggingUI = false
+	end
+end)
+UserInputService.InputChanged:Connect(function(input, gp)
+	if draggingUI and (input.KeyCode == nil) then
+		local delta = Vector2.new(input.Position.X - dragStart.X, input.Position.Y - dragStart.Y)
+		panel.Position = UDim2.new(
+			startPos.X.Scale, startPos.X.Offset + delta.X,
+			startPos.Y.Scale, startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- --- Minimizar / expandir com animação suave ---
+local minimized = false
+minimizeBtn.MouseButtonClicked:Connect(function()
+	minimized = not minimized
+	if minimized then
+		TweenService:Create(panel, TweenInfo.new(0.35, Enum.EasingStyle.Back), {
+			Size = UDim2.new(0, 44, 0, 44),
+		})
+	else
+		TweenService:Create(panel, TweenInfo.new(0.35, Enum.EasingStyle.Back), {
+			Size = UDim2.new(0, 300, 0, 360),
+		})
+	end
+end)
+
+-- =========================================================================
+-- ANIMAÇÕES DE ENTRADA (suaves)
+-- =========================================================================
+local function animateIn()
+	local goal = { Position = UDim2.new(0, 40, 0, 40) }
+	local current = UDim2.new(0, 40, 0, -400) -- começa fora do topo
+	TweenService:Create(panel, TweenInfo.new(0.55, Enum.EasingStyle.Out, Enum.EasingDirection.Bounce), {
+		Position = goal.Position,
+	})
+end
+
+task.delay(0.3, animateIn)
+
+-- =========================================================================
+-- LIMPEZA (remover GUI ao sair / respawn controlado)
+-- =========================================================================
+screenGui.Destroying:Connect(function()
+	RunService.RenderStepped:Disconnect(RenderFrame)
+end)
